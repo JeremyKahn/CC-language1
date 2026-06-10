@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LinguaForge — AI Language Learning</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand">🗣️ LinguaForge</div>
+  <div class="session-info">
+    <span id="who-chip" class="chip" title="Click to switch user / language">…</span>
+    <button id="btn-settings" class="icon-btn" title="Settings">⚙️</button>
+  </div>
+</header>
+
+<nav id="tabs">
+  <button class="tab active" data-view="dashboard">📊 Dashboard</button>
+  <button class="tab" data-view="listen">🎧 Listen &amp; Repeat</button>
+  <button class="tab" data-view="reading">📖 Reading</button>
+  <button class="tab" data-view="vocab">📚 Vocabulary</button>
+  <button class="tab" data-view="grammar">🧩 Grammar</button>
+</nav>
+
+<main>
+
+<!-- ======================= DASHBOARD ======================= -->
+<section id="view-dashboard" class="view active">
+  <h2>Your progress in <span class="lang-name">…</span></h2>
+  <div id="skill-bars" class="card"></div>
+  <div class="dash-grid">
+    <div class="card stat-card">
+      <div class="stat-num" id="stat-mastered">0</div>
+      <div class="stat-label">words mastered</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-num" id="stat-learning">0</div>
+      <div class="stat-label">words learning</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-num" id="stat-listen-level">1</div>
+      <div class="stat-label">listen &amp; repeat level</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-num" id="stat-grammar">0/0</div>
+      <div class="stat-label">grammar elements mastered</div>
+    </div>
+  </div>
+  <div class="card" id="dash-tips">
+    <h3>Getting started</h3>
+    <ol>
+      <li>Open <b>⚙️ Settings</b> and paste your <b>Anthropic API key</b> (required) and, ideally, an <b>OpenAI API key</b> for high-quality speech.</li>
+      <li>Add a few words you know to <b>Vocabulary → Mastered</b>, and words you're working on to <b>Learning</b> (or just start practising — the app builds your lists as you go).</li>
+      <li>Try <b>Listen &amp; Repeat</b> to train listening and pronunciation, <b>Reading</b> for custom texts, and <b>Grammar</b> for a structured course.</li>
+    </ol>
+  </div>
+</section>
+
+<!-- ======================= LISTEN & REPEAT ======================= -->
+<section id="view-listen" class="view">
+  <h2>Listen &amp; Repeat</h2>
+  <div class="card">
+    <div class="row space-between">
+      <div>Difficulty level: <b id="lr-level">1</b> / 10</div>
+      <div class="muted" id="lr-streak"></div>
+    </div>
+    <div id="lr-stage">
+      <div id="lr-phrase-box" class="phrase-box hidden">
+        <div id="lr-phrase" class="phrase blurred">…</div>
+        <div id="lr-translation" class="translation hidden"></div>
+        <div class="row center gap">
+          <button id="lr-replay" class="btn">🔊 Play again</button>
+          <button id="lr-replay-slow" class="btn">🐢 Slowly</button>
+          <button id="lr-show" class="btn ghost">👁 Show text</button>
+        </div>
+      </div>
+      <div class="row center gap" id="lr-controls">
+        <button id="lr-start" class="btn primary big">▶ Start session</button>
+        <button id="lr-record" class="btn record big hidden">🎙 Click to record your repeat</button>
+        <button id="lr-skip" class="btn ghost hidden">Skip ↷</button>
+      </div>
+      <div id="lr-feedback" class="feedback hidden"></div>
+      <div id="lr-heard" class="muted center"></div>
+    </div>
+  </div>
+  <div class="card muted small">
+    The tutor says a phrase — repeat it aloud. If you repeat it correctly, the next phrase is a little harder.
+    If you struggle, it is repeated slowly; if you still can't repeat it, you get a simpler phrase.
+  </div>
+</section>
+
+<!-- ======================= READING ======================= -->
+<section id="view-reading" class="view">
+  <h2>Reading practice</h2>
+  <div class="card">
+    <div class="form-grid">
+      <label>Length (words)
+        <input type="range" id="rd-length" min="50" max="800" step="25" value="200">
+        <span id="rd-length-val">200</span>
+      </label>
+      <label>Share of "learning" words
+        <input type="range" id="rd-ratio" min="0" max="60" step="5" value="25">
+        <span id="rd-ratio-val">25%</span>
+      </label>
+      <label>Topic (optional)
+        <input type="text" id="rd-topic" placeholder="e.g. a trip to the market, football, a folk tale…">
+      </label>
+    </div>
+    <div class="row gap">
+      <button id="rd-generate" class="btn primary">✍️ Generate text</button>
+      <button id="rd-pdf" class="btn hidden">⬇️ Download PDF</button>
+      <button id="rd-listen" class="btn hidden">🔊 Read aloud</button>
+    </div>
+  </div>
+  <div id="rd-output" class="hidden">
+    <div class="card">
+      <h3 id="rd-title"></h3>
+      <div id="rd-glossary-wrap">
+        <h4>Glossary <button id="rd-gloss-add" class="btn small ghost">+ add all to Learning</button></h4>
+        <table id="rd-glossary" class="gloss-table"></table>
+      </div>
+      <div id="rd-text" class="reading-text"></div>
+      <div class="row gap rating-row">
+        <span>How well did you understand it?</span>
+        <span id="rd-rating">
+          <button class="btn small" data-r="1">1</button><button class="btn small" data-r="2">2</button><button class="btn small" data-r="3">3</button><button class="btn small" data-r="4">4</button><button class="btn small" data-r="5">5</button>
+        </span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= VOCABULARY ======================= -->
+<section id="view-vocab" class="view">
+  <h2>Vocabulary</h2>
+  <div class="card">
+    <div class="row gap wrap">
+      <input type="text" id="vb-word" placeholder="word in target language">
+      <input type="text" id="vb-trans" placeholder="translation (or leave blank → AI)">
+      <select id="vb-set">
+        <option value="learning">→ Learning</option>
+        <option value="mastered">→ Mastered</option>
+      </select>
+      <button id="vb-add" class="btn primary">Add</button>
+      <button id="vb-bulk" class="btn ghost">Bulk add…</button>
+    </div>
+    <div id="vb-bulk-box" class="hidden">
+      <textarea id="vb-bulk-text" rows="4" placeholder="One word per line (optionally: word = translation). Missing translations are filled in by AI."></textarea>
+      <button id="vb-bulk-go" class="btn">Add all to Learning</button>
+    </div>
+  </div>
+  <div class="vocab-cols">
+    <div class="card">
+      <div class="row space-between">
+        <h3>Learning <span class="count" id="vb-learning-count"></span></h3>
+        <div class="row gap">
+          <button class="btn small" id="vb-anki-learning">🃏 Anki deck</button>
+        </div>
+      </div>
+      <div id="vb-learning-list" class="word-list"></div>
+    </div>
+    <div class="card">
+      <div class="row space-between">
+        <h3>Mastered <span class="count" id="vb-mastered-count"></span></h3>
+        <div class="row gap">
+          <button class="btn small" id="vb-anki-mastered">🃏 Anki deck</button>
+        </div>
+      </div>
+      <div id="vb-mastered-list" class="word-list"></div>
+    </div>
+  </div>
+  <div class="card muted small">
+    Anki export downloads a ready-to-import <code>.apkg</code> deck (cards: word → translation + example sentence).
+  </div>
+</section>
+
+<!-- ======================= GRAMMAR ======================= -->
+<section id="view-grammar" class="view">
+  <h2>Grammar course</h2>
+  <div class="card" id="gr-intro">
+    <p>The AI builds a sequenced grammar curriculum for your language, teaches each element with examples, then tests you on it.</p>
+    <button id="gr-generate" class="btn primary">🧩 Generate curriculum</button>
+  </div>
+  <div id="gr-curriculum" class="hidden">
+    <div class="card">
+      <h3>Curriculum</h3>
+      <ol id="gr-list" class="curriculum-list"></ol>
+      <button id="gr-regen" class="btn ghost small">↻ Regenerate curriculum</button>
+    </div>
+    <div class="card hidden" id="gr-lesson">
+      <h3 id="gr-lesson-title"></h3>
+      <div id="gr-lesson-body"></div>
+      <div class="row gap">
+        <button id="gr-practice" class="btn primary">📝 Test me on this</button>
+      </div>
+    </div>
+    <div class="card hidden" id="gr-quiz">
+      <h3>Exercises — <span id="gr-quiz-title"></span></h3>
+      <div id="gr-quiz-body"></div>
+      <div id="gr-quiz-result" class="hidden"></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ======================= MODALS ======================= -->
+<div id="modal-backdrop" class="hidden">
+  <div id="modal-settings" class="modal hidden">
+    <h3>Settings</h3>
+    <label>Anthropic API key (text generation — required)
+      <input type="password" id="set-anthropic-key" placeholder="sk-ant-…">
+    </label>
+    <label>Claude model
+      <select id="set-model">
+        <option value="claude-opus-4-8">Claude Opus 4.8 (best quality)</option>
+        <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (faster/cheaper)</option>
+        <option value="claude-haiku-4-5">Claude Haiku 4.5 (cheapest)</option>
+      </select>
+    </label>
+    <label>OpenAI API key (speech — recommended)
+      <input type="password" id="set-openai-key" placeholder="sk-…">
+    </label>
+    <label>Speech engine
+      <select id="set-speech">
+        <option value="auto">Auto (OpenAI if key set, else browser)</option>
+        <option value="openai">OpenAI (gpt-4o-mini-tts + gpt-4o-transcribe)</option>
+        <option value="browser">Browser (Web Speech API, free)</option>
+      </select>
+    </label>
+    <label>OpenAI voice
+      <select id="set-voice">
+        <option>alloy</option><option>ash</option><option>coral</option>
+        <option>fable</option><option>nova</option><option>onyx</option>
+        <option>sage</option><option>shimmer</option>
+      </select>
+    </label>
+    <p class="muted small">Keys are stored only in this browser's localStorage and sent only to api.anthropic.com / api.openai.com.</p>
+    <div class="row gap right">
+      <button id="set-cancel" class="btn ghost">Cancel</button>
+      <button id="set-save" class="btn primary">Save</button>
+    </div>
+  </div>
+
+  <div id="modal-profile" class="modal hidden">
+    <h3>Who is learning what?</h3>
+    <label>Your name
+      <input type="text" id="prof-user" list="prof-user-list" placeholder="e.g. Jeremy">
+      <datalist id="prof-user-list"></datalist>
+    </label>
+    <label>Language to learn
+      <select id="prof-lang"></select>
+    </label>
+    <div id="prof-custom-wrap" class="hidden">
+      <label>Language name <input type="text" id="prof-custom-name" placeholder="e.g. Catalan"></label>
+      <label>BCP-47 code <input type="text" id="prof-custom-code" placeholder="e.g. ca-ES"></label>
+    </div>
+    <div class="row gap right">
+      <button id="prof-save" class="btn primary">Start learning</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<div id="busy" class="hidden"><div class="spinner"></div><div id="busy-msg">Thinking…</div></div>
+
+<script src="js/storage.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/speech.js"></script>
+<script src="js/anki.js"></script>
+<script src="js/vocab.js"></script>
+<script src="js/listen.js"></script>
+<script src="js/reading.js"></script>
+<script src="js/grammar.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
