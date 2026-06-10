@@ -83,6 +83,48 @@ const App = (() => {
     document.getElementById("modal-profile").classList.add("hidden");
   }
 
+  const VOICE_SAMPLES = {
+    es: "¡Hola! ¿Qué tal? Esta es una prueba de la voz.",
+    fr: "Bonjour ! Comment allez-vous ? Ceci est un essai de la voix.",
+    de: "Hallo! Wie geht es dir? Dies ist ein Stimmtest.",
+    it: "Ciao! Come stai? Questa è una prova della voce.",
+    pt: "Olá! Tudo bem? Este é um teste de voz.",
+    ja: "こんにちは！お元気ですか？これは音声のテストです。",
+    zh: "你好！你好吗？这是语音测试。",
+    ko: "안녕하세요! 잘 지내세요? 음성 테스트입니다.",
+    ru: "Привет! Как дела? Это проверка голоса.",
+    ar: "مرحباً! كيف حالك؟ هذا اختبار للصوت.",
+    hi: "नमस्ते! आप कैसे हैं? यह आवाज़ की जाँच है।",
+    nl: "Hallo! Hoe gaat het? Dit is een stemtest.",
+    pl: "Cześć! Jak się masz? To jest test głosu.",
+    tr: "Merhaba! Nasılsın? Bu bir ses testi.",
+    sv: "Hej! Hur mår du? Det här är ett rösttest.",
+    el: "Γεια σου! Τι κάνεις; Αυτή είναι μια δοκιμή φωνής.",
+    he: "שלום! מה שלומך? זוהי בדיקת קול.",
+    vi: "Xin chào! Bạn khỏe không? Đây là bài kiểm tra giọng nói.",
+    en: "Hello! How are you? This is a voice test.",
+  };
+
+  function testVoice() {
+    // apply the modal's current values in memory so the test reflects them
+    const s = Store.app.settings;
+    s.anthropicKey = document.getElementById("set-anthropic-key").value.trim();
+    s.openaiKey = document.getElementById("set-openai-key").value.trim();
+    s.speech = document.getElementById("set-speech").value;
+    s.voice = document.getElementById("set-voice").value;
+    const iso = (Store.app.language?.bcp || "en-US").slice(0, 2);
+    const sample = VOICE_SAMPLES[iso] || VOICE_SAMPLES.en;
+    Speech.speak(sample, {
+      onEngine: (info) =>
+        toast(
+          info.engine === "openai"
+            ? `Using OpenAI gpt-4o-mini-tts, voice “${info.voice}”`
+            : `Using browser voice “${info.voice}”` +
+              (info.fallback ? ` — OpenAI failed: ${info.fallback}` : "")
+        ),
+    }).catch((e) => toast(e.message));
+  }
+
   function saveSettings() {
     const s = Store.app.settings;
     s.anthropicKey = document.getElementById("set-anthropic-key").value.trim();
@@ -173,6 +215,7 @@ const App = (() => {
     });
     document.getElementById("btn-settings").onclick = openSettings;
     document.getElementById("set-save").onclick = saveSettings;
+    document.getElementById("set-test").onclick = testVoice;
     document.getElementById("set-cancel").onclick = closeModals;
     document.getElementById("who-chip").onclick = () => openProfile(true);
     document.getElementById("prof-save").onclick = saveProfile;

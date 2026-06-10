@@ -62,11 +62,16 @@ successfully accumulate credit toward "mastered" (5 successes promotes a word).
 ### 📖 Reading
 Generates a body of text built from your mastered + learning vocabulary. You
 control the **length** and the **proportion of "learning" words**, and can set
-a topic. Words outside your two lists appear in a **glossary before the text**
-(one click adds them all to your learning list). **Download PDF** renders a
-print-formatted page and opens the browser's print dialog ("Save as PDF") —
-this route handles every script (CJK, Arabic, Cyrillic, …) reliably. You can
-also have the text read aloud.
+a topic. Words outside your two lists appear in a **glossary before the text**.
+**Click any word in the text** to add it to the glossary (word segmentation
+uses `Intl.Segmenter`, so this works for Chinese/Japanese/Thai too); the
+glossary has **Translate all** (one batched AI call), **Hide/Show** (practice
+without peeking), **Clear**, and **add all → Learning** buttons. **Download
+PDF** renders a print-formatted page and opens the browser's print dialog
+("Save as PDF") — this route handles every script (CJK, Arabic, Cyrillic, …)
+reliably. **Read aloud** speaks the text expressively; a status line below the
+button always shows **which voice engine is actually in use** (and why, if a
+fallback occurred).
 
 ### 📚 Vocabulary & Anki export
 Manage both word sets (add single words, bulk-add lists — missing translations
@@ -98,3 +103,23 @@ score.
 | Anki | Real `.apkg` (SQLite schema v11 via sql.js, zipped with JSZip); TSV fallback. |
 
 No data ever leaves your machine except the API calls to Anthropic/OpenAI.
+
+## Microphone permission notes
+
+The app requests the microphone **once per session** and keeps the stream open
+(you'll see Chrome's recording indicator while the tab is open). This matters
+because Chrome **never remembers** mic permission for pages opened from
+`file://` — without a persistent stream it would re-prompt on every recording.
+If you serve the app from `http://localhost` or GitHub Pages (https), Chrome
+offers "Allow on every visit" and remembers your choice permanently.
+macOS also asks once per app (System Settings → Privacy & Security →
+Microphone → Chrome) — that one is the OS, not the page.
+
+## Troubleshooting voices
+
+Settings has a **🔊 Test** button that speaks a sample and reports exactly
+which engine produced it. In Reading, the line under "Read aloud" does the
+same. If you expected OpenAI and see "browser speech synthesis", the message
+includes the OpenAI error (bad key, no credit, rate limit…). OpenAI voices
+(alloy, ash, coral, fable, nova, onyx, sage, shimmer) only differ when the
+OpenAI engine is actually in use — the browser engine has its own OS voices.

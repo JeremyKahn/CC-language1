@@ -1,17 +1,24 @@
 /* speech.js — Text-to-speech and speech recognition.
  *
  * Primary engine (when an OpenAI key is set): OpenAI gpt-4o-mini-tts for
- * speaking (steerable pace and clarity across many languages) and
- * gpt-4o-transcribe for recognizing the learner's speech. These are currently
- * the most suitable hosted models for multilingual spoken interaction.
+ * speaking (steerable pace, clarity and expressiveness across many languages)
+ * and gpt-4o-transcribe for recognizing the learner's speech. These are
+ * currently the most suitable hosted models for multilingual spoken
+ * interaction.
  *
  * Fallback engine: Chrome's built-in Web Speech API (speechSynthesis +
- * webkitSpeechRecognition) — free, no key required.
+ * webkitSpeechRecognition) — free, no key required. Any fallback is reported
+ * to the caller via onEngine and a toast, never silently.
  */
 "use strict";
 
 const Speech = (() => {
+  const OPENAI_TTS_CHAR_LIMIT = 3000; // API limit is 4096; chunk well below it
+
   let currentAudio = null;
+  let speakToken = 0; // bumped by stop() to cancel an in-flight chunk sequence
+  let micStream = null; // kept open for the whole session so Chrome (esp. on
+  // file:// pages, where grants are never remembered) asks for the mic once
   let mediaRecorder = null;
   let recChunks = [];
   let browserRec = null;
@@ -20,7 +27,7 @@ const Speech = (() => {
     const s = Store.app.settings;
     if (s.speech === "openai") return "openai";
     if (s.speech === "browser") return "browser";
-    return s.openaiKey ? "openai" : "browser";
+    return (s.openaiKey || "").trim() ? "openai" : "browser";
   }
 
   function bcp() {
@@ -33,43 +40,95 @@ const Speech = (() => {
 
   /* ---------------- TTS ---------------- */
 
-  async function speak(text, { slow = false } = {}) {
+  /** Speak text. onEngine (optional) is called when playback starts with
+   *  {engine, voice, fallback?} describing what is ACTUALLY being used. */
+  async function speak(text, { slow = false, onEngine = null } = {}) {
     stop();
+    const token = speakToken;
     if (engine() === "openai") {
       try {
-        return await speakOpenAI(text, slow);
+        return await speakOpenAI(text, slow, onEngine, token);
       } catch (e) {
+        if (token !== speakToken) return; // cancelled, not an error
         console.warn("OpenAI TTS failed, falling back to browser:", e);
-        return speakBrowser(text, slow);
+        window.App?.toast("OpenAI voice failed (" + e.message + ") — using browser voice.");
+        return speakBrowser(text, slow, onEngine, e.message);
       }
     }
-    return speakBrowser(text, slow);
+    return speakBrowser(text, slow, onEngine);
   }
 
-  async function speakOpenAI(text, slow) {
+  /** Split text into chunks below the OpenAI input limit, on sentence (then
+   *  word) boundaries, so long reading texts can be spoken. */
+  function chunkText(text, max = OPENAI_TTS_CHAR_LIMIT) {
+    if (text.length <= max) return [text];
+    const sentences = text.match(/[^.!?。！？؟\n]+[.!?。！？؟]*\s*|\n+/g) || [text];
+    const chunks = [];
+    let cur = "";
+    for (let s of sentences) {
+      while (s.length > max) {
+        // pathological sentence longer than the limit: hard-split on spaces
+        let cut = s.lastIndexOf(" ", max);
+        if (cut < max / 2) cut = max;
+        if (cur) {
+          chunks.push(cur);
+          cur = "";
+        }
+        chunks.push(s.slice(0, cut));
+        s = s.slice(cut);
+      }
+      if (cur.length + s.length > max) {
+        chunks.push(cur);
+        cur = s;
+      } else {
+        cur += s;
+      }
+    }
+    if (cur.trim()) chunks.push(cur);
+    return chunks;
+  }
+
+  async function speakOpenAI(text, slow, onEngine, token) {
     const key = Store.app.settings.openaiKey.trim();
+    if (!key) throw new Error("no OpenAI key set");
+    const voice = Store.app.settings.voice || "alloy";
     const instructions = slow
       ? `Speak in ${langName()}. Speak very slowly and extremely clearly, with a short pause between each word, enunciating every syllable, like a patient teacher helping a beginner repeat the phrase.`
-      : `Speak in ${langName()}. Speak clearly at a relaxed, natural pace suitable for a language learner.`;
-    const resp = await fetch("https://api.openai.com/v1/audio/speech", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini-tts",
-        voice: Store.app.settings.voice || "alloy",
-        input: text,
-        instructions,
-        response_format: "mp3",
-      }),
-    });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      throw new Error(`OpenAI TTS ${resp.status}: ${err.error?.message || resp.statusText}`);
+      : `Read aloud in ${langName()} like a skilled, engaged audiobook narrator: natural, expressive intonation, varied pitch and rhythm, conveying the meaning and feeling of the text. Articulate clearly at a relaxed pace suitable for a language learner.`;
+
+    const chunks = chunkText(text);
+    let announced = false;
+    for (const chunk of chunks) {
+      if (token !== speakToken) return;
+      const resp = await fetch("https://api.openai.com/v1/audio/speech", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini-tts",
+          voice,
+          input: chunk,
+          instructions,
+          response_format: "mp3",
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(`OpenAI TTS ${resp.status}: ${err.error?.message || resp.statusText}`);
+      }
+      const blob = await resp.blob();
+      if (token !== speakToken) return;
+      if (!announced) {
+        announced = true;
+        onEngine?.({ engine: "openai", voice });
+      }
+      await playBlob(blob, slow, token);
     }
-    const blob = await resp.blob();
+  }
+
+  function playBlob(blob, slow, token) {
     const url = URL.createObjectURL(blob);
     return new Promise((resolve, reject) => {
       currentAudio = new Audio(url);
@@ -78,36 +137,105 @@ const Speech = (() => {
         URL.revokeObjectURL(url);
         resolve();
       };
-      currentAudio.onerror = () => reject(new Error("Audio playback failed"));
+      currentAudio.onpause = () => {
+        // stop() pauses us mid-chunk: end quietly
+        if (token !== speakToken) {
+          URL.revokeObjectURL(url);
+          resolve();
+        }
+      };
+      currentAudio.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("Audio playback failed"));
+      };
       currentAudio.play().catch(reject);
     });
   }
 
-  function speakBrowser(text, slow) {
+  /** Chrome populates speechSynthesis.getVoices() asynchronously; wait for it. */
+  function voicesReady() {
+    return new Promise((resolve) => {
+      const have = speechSynthesis.getVoices();
+      if (have.length) return resolve(have);
+      let settled = false;
+      const done = () => {
+        if (!settled) {
+          settled = true;
+          resolve(speechSynthesis.getVoices());
+        }
+      };
+      speechSynthesis.addEventListener("voiceschanged", done, { once: true });
+      setTimeout(done, 1200);
+    });
+  }
+
+  function pickBrowserVoice(voices) {
+    const prefix = bcp().slice(0, 2).toLowerCase();
+    const match = voices.filter((v) => v.lang.toLowerCase().startsWith(prefix));
+    if (!match.length) return null;
+    // prefer Chrome's network "Google …" voices and OS "natural/premium" ones
+    return (
+      match.find((v) => /google/i.test(v.name)) ||
+      match.find((v) => /natural|premium|enhanced|neural/i.test(v.name)) ||
+      match.find((v) => v.lang.toLowerCase() === bcp().toLowerCase()) ||
+      match[0]
+    );
+  }
+
+  async function speakBrowser(text, slow, onEngine, fallbackReason) {
+    if (!("speechSynthesis" in window)) {
+      throw new Error("This browser has no speech synthesis. Add an OpenAI key in Settings.");
+    }
+    const voices = await voicesReady();
+    const voice = pickBrowserVoice(voices);
+    onEngine?.({
+      engine: "browser",
+      voice: voice ? voice.name : `default for ${bcp()}`,
+      fallback: fallbackReason,
+    });
     return new Promise((resolve, reject) => {
-      if (!("speechSynthesis" in window)) {
-        return reject(new Error("This browser has no speech synthesis. Add an OpenAI key in Settings."));
-      }
       const u = new SpeechSynthesisUtterance(text);
       u.lang = bcp();
       u.rate = slow ? 0.55 : 0.9;
-      const voice = speechSynthesis
-        .getVoices()
-        .find((v) => v.lang.toLowerCase().startsWith(bcp().slice(0, 2).toLowerCase()));
       if (voice) u.voice = voice;
       u.onend = () => resolve();
-      u.onerror = (e) => reject(new Error("Speech synthesis error: " + e.error));
+      u.onerror = (e) => {
+        if (e.error === "interrupted" || e.error === "canceled") resolve();
+        else reject(new Error("Speech synthesis error: " + e.error));
+      };
       speechSynthesis.speak(u);
     });
   }
 
   function stop() {
+    speakToken++;
     if (currentAudio) {
       currentAudio.pause();
       currentAudio = null;
     }
     if ("speechSynthesis" in window) speechSynthesis.cancel();
   }
+
+  /* ---------------- Microphone ---------------- */
+
+  /** One mic stream per session. Chrome never remembers the permission for
+   *  file:// pages, so releasing the stream after each recording would cause
+   *  a permission prompt on every attempt. */
+  async function getMicStream() {
+    if (micStream && micStream.getTracks().some((t) => t.readyState === "live")) {
+      return micStream;
+    }
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    return micStream;
+  }
+
+  function releaseMic() {
+    if (micStream) {
+      micStream.getTracks().forEach((t) => t.stop());
+      micStream = null;
+    }
+  }
+  window.addEventListener("pagehide", releaseMic);
 
   /* ---------------- Recognition ---------------- */
 
@@ -118,7 +246,7 @@ const Speech = (() => {
   }
 
   async function startRecognitionOpenAI() {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await getMicStream();
     recChunks = [];
     mediaRecorder = new MediaRecorder(stream);
     mediaRecorder.ondataavailable = (e) => {
@@ -129,7 +257,7 @@ const Speech = (() => {
     return () =>
       new Promise((resolve, reject) => {
         mediaRecorder.onstop = async () => {
-          stream.getTracks().forEach((t) => t.stop());
+          // NB: the stream stays open (see getMicStream) — no track.stop() here
           try {
             const blob = new Blob(recChunks, { type: mediaRecorder.mimeType || "audio/webm" });
             resolve(await transcribeOpenAI(blob));
@@ -237,5 +365,5 @@ const Speech = (() => {
     return 1 - levenshtein(a2, b2) / Math.max(a2.length, b2.length);
   }
 
-  return { speak, stop, startRecognition, similarity, normalize, engine };
+  return { speak, stop, startRecognition, similarity, normalize, engine, releaseMic };
 })();

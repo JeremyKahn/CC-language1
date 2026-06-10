@@ -112,13 +112,22 @@
       <button id="rd-generate" class="btn primary">✍️ Generate text</button>
       <button id="rd-pdf" class="btn hidden">⬇️ Download PDF</button>
       <button id="rd-listen" class="btn hidden">🔊 Read aloud</button>
+      <button id="rd-stop" class="btn ghost small">⏹ Stop</button>
     </div>
+    <div id="rd-voice-status" class="muted small"></div>
   </div>
   <div id="rd-output" class="hidden">
     <div class="card">
       <h3 id="rd-title"></h3>
       <div id="rd-glossary-wrap">
-        <h4>Glossary <button id="rd-gloss-add" class="btn small ghost">+ add all to Learning</button></h4>
+        <h4 class="row gap wrap">Glossary
+          <button id="rd-gloss-translate" class="btn small">🌐 Translate all</button>
+          <button id="rd-gloss-toggle" class="btn small">🙈 Hide</button>
+          <button id="rd-gloss-add" class="btn small ghost">+ all → Learning</button>
+          <button id="rd-gloss-clear" class="btn small ghost">🗑 Clear</button>
+        </h4>
+        <div class="muted small">Click any word in the text below to add it to the glossary.</div>
+        <div id="rd-gloss-empty" class="muted small hidden">— glossary is empty —</div>
         <table id="rd-glossary" class="gloss-table"></table>
       </div>
       <div id="rd-text" class="reading-text"></div>
@@ -231,11 +240,14 @@
       </select>
     </label>
     <label>OpenAI voice
-      <select id="set-voice">
-        <option>alloy</option><option>ash</option><option>coral</option>
-        <option>fable</option><option>nova</option><option>onyx</option>
-        <option>sage</option><option>shimmer</option>
-      </select>
+      <span class="row gap">
+        <select id="set-voice">
+          <option>alloy</option><option>ash</option><option>coral</option>
+          <option>fable</option><option>nova</option><option>onyx</option>
+          <option>sage</option><option>shimmer</option>
+        </select>
+        <button id="set-test" class="btn small" title="Speak a sample with the settings above">🔊 Test</button>
+      </span>
     </label>
     <p class="muted small">Keys are stored only in this browser's localStorage and sent only to api.anthropic.com / api.openai.com.</p>
     <div class="row gap right">
