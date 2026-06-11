@@ -49,11 +49,21 @@ feeds back into these scores, shown on the dashboard.
 
 ### 🎧 Listen & Repeat
 The tutor speaks a phrase (text hidden by default — it's listening practice);
-you repeat it into the microphone.
-- Repeat it correctly → a new, slightly harder phrase (difficulty 1–10 ramps
-  from 2-word phrases to long native-level sentences).
-- Miss it → the same phrase is repeated **slowly and carefully**.
-- Miss it again → you get a **simpler** phrase.
+the microphone opens **automatically** when the phrase ends and recording
+stops **by itself** when you fall silent (voice-activity detection on the mic
+signal for the OpenAI engine; the Web Speech API does this natively). Click
+the button only to cut a take short.
+
+Scoring is character-level Levenshtein similarity on normalized text
+(lowercase, punctuation and spaces stripped — so it works for unspaced
+scripts too), with two tiers:
+- **≥ 92 % — excellent**: next phrase AND the difficulty rises (about three
+  excellents climb one level of the 1–10 ladder, from 2-word phrases to long
+  native-level sentences).
+- **≥ 75 % — good enough**: next phrase at the **same** level, so you stay at
+  an appropriate difficulty until your repeats are consistently near-perfect.
+- Below 75 % → the same phrase is repeated **slowly and carefully**; miss
+  again and you get a **simpler** phrase.
 
 Phrases are built preferentially from your mastered/learning words; new words
 that appear are offered into your learning list, and learning words you repeat

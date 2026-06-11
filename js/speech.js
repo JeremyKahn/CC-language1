@@ -19,9 +19,7 @@ const Speech = (() => {
   let speakToken = 0; // bumped by stop() to cancel an in-flight chunk sequence
   let micStream = null; // kept open for the whole session so Chrome (esp. on
   // file:// pages, where grants are never remembered) asks for the mic once
-  let mediaRecorder = null;
   let recChunks = [];
-  let browserRec = null;
 
   function engine() {
     const s = Store.app.settings;
@@ -239,34 +237,154 @@ const Speech = (() => {
 
   /* ---------------- Recognition ---------------- */
 
-  /** Start recording; returns a stop() function that resolves to the transcript. */
-  async function startRecognition() {
-    if (engine() === "openai") return startRecognitionOpenAI();
-    return startRecognitionBrowser();
+  /** Start an automatic recording session. Returns {stop, cancel, result}:
+   *  - result resolves to the transcript, or null if cancel() was called;
+   *  - recording ends BY ITSELF when the speaker falls silent (voice-activity
+   *    detection for the OpenAI engine; the Web Speech API does this natively);
+   *  - stop() forces an early finish, cancel() discards the recording.
+   *  onStatus receives "listening" | "hearing" | "transcribing". */
+  async function listen({ onStatus } = {}) {
+    if (engine() === "openai") return listenOpenAI(onStatus);
+    return listenBrowser(onStatus);
   }
 
-  async function startRecognitionOpenAI() {
+  let audioCtx = null; // shared; created after the first user gesture
+
+  async function listenOpenAI(onStatus) {
     const stream = await getMicStream();
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") await audioCtx.resume().catch(() => {});
+    const source = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    source.connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+
     recChunks = [];
-    mediaRecorder = new MediaRecorder(stream);
-    mediaRecorder.ondataavailable = (e) => {
+    const rec = new MediaRecorder(stream);
+    rec.ondataavailable = (e) => {
       if (e.data.size > 0) recChunks.push(e.data);
     };
-    mediaRecorder.start();
+    rec.start();
+    onStatus?.("listening");
 
-    return () =>
-      new Promise((resolve, reject) => {
-        mediaRecorder.onstop = async () => {
-          // NB: the stream stays open (see getMicStream) — no track.stop() here
-          try {
-            const blob = new Blob(recChunks, { type: mediaRecorder.mimeType || "audio/webm" });
-            resolve(await transcribeOpenAI(blob));
-          } catch (e) {
-            reject(e);
-          }
-        };
-        mediaRecorder.stop();
-      });
+    let cancelled = false;
+    let resolveResult, rejectResult;
+    const result = new Promise((res, rej) => {
+      resolveResult = res;
+      rejectResult = rej;
+    });
+
+    // Voice-activity detection: estimate the noise floor for 400ms, then
+    // treat RMS spikes above it as speech; finish after sustained silence.
+    const CALIBRATE_MS = 400;
+    const SILENCE_MS = 1400; // pause that ends the recording once speech began
+    const NOSPEECH_MS = 8000; // give up if the learner never speaks
+    const MAX_MS = 25000;
+    const t0 = performance.now();
+    let speechStarted = false;
+    let lastVoice = 0;
+    let floorSum = 0;
+    let floorN = 0;
+
+    const timer = setInterval(() => {
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      const rms = Math.sqrt(sum / buf.length);
+      const now = performance.now();
+      if (now - t0 < CALIBRATE_MS) {
+        floorSum += rms;
+        floorN++;
+        return;
+      }
+      const thresh = Math.max(0.012, (floorSum / Math.max(1, floorN)) * 3);
+      if (rms > thresh) {
+        if (!speechStarted) onStatus?.("hearing");
+        speechStarted = true;
+        lastVoice = now;
+      }
+      if (
+        (speechStarted && now - lastVoice > SILENCE_MS) ||
+        (!speechStarted && now - t0 > NOSPEECH_MS) ||
+        now - t0 > MAX_MS
+      ) {
+        finish();
+      }
+    }, 100);
+
+    function finish() {
+      if (rec.state === "inactive") return;
+      clearInterval(timer);
+      try {
+        source.disconnect();
+      } catch (e) {
+        /* already disconnected */
+      }
+      rec.onstop = async () => {
+        // NB: the mic stream stays open (see getMicStream) — no track.stop()
+        if (cancelled) return resolveResult(null);
+        onStatus?.("transcribing");
+        try {
+          const blob = new Blob(recChunks, { type: rec.mimeType || "audio/webm" });
+          resolveResult(await transcribeOpenAI(blob));
+        } catch (e) {
+          rejectResult(e);
+        }
+      };
+      rec.stop();
+    }
+
+    return {
+      stop: finish,
+      cancel: () => {
+        cancelled = true;
+        finish();
+      },
+      result,
+    };
+  }
+
+  function listenBrowser(onStatus) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      throw new Error("This browser has no speech recognition. Use Chrome, or add an OpenAI key in Settings.");
+    }
+    const rec = new SR();
+    rec.lang = bcp();
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+
+    let transcript = "";
+    let cancelled = false;
+    let resolveResult, rejectResult;
+    const result = new Promise((res, rej) => {
+      resolveResult = res;
+      rejectResult = rej;
+    });
+    rec.onresult = (e) => {
+      transcript = Array.from(e.results)
+        .map((r) => r[0].transcript)
+        .join(" ");
+      onStatus?.("hearing");
+    };
+    rec.onerror = (e) => {
+      if (e.error !== "no-speech" && e.error !== "aborted") {
+        rejectResult(new Error("Speech recognition error: " + e.error));
+      }
+    };
+    rec.onend = () => resolveResult(cancelled ? null : transcript); // auto-ends on silence
+    rec.start();
+    onStatus?.("listening");
+
+    return {
+      stop: () => rec.stop(),
+      cancel: () => {
+        cancelled = true;
+        rec.abort();
+      },
+      result,
+    };
   }
 
   async function transcribeOpenAI(blob) {
@@ -287,41 +405,6 @@ const Speech = (() => {
     }
     const data = await resp.json();
     return data.text || "";
-  }
-
-  function startRecognitionBrowser() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      throw new Error("This browser has no speech recognition. Use Chrome, or add an OpenAI key in Settings.");
-    }
-    browserRec = new SR();
-    browserRec.lang = bcp();
-    browserRec.interimResults = false;
-    browserRec.maxAlternatives = 1;
-
-    let transcript = "";
-    let endResolve, endReject;
-    const ended = new Promise((res, rej) => {
-      endResolve = res;
-      endReject = rej;
-    });
-    browserRec.onresult = (e) => {
-      transcript = Array.from(e.results)
-        .map((r) => r[0].transcript)
-        .join(" ");
-    };
-    browserRec.onerror = (e) => {
-      if (e.error !== "no-speech" && e.error !== "aborted") {
-        endReject(new Error("Speech recognition error: " + e.error));
-      }
-    };
-    browserRec.onend = () => endResolve(transcript);
-    browserRec.start();
-
-    return Promise.resolve(() => {
-      browserRec.stop();
-      return ended;
-    });
   }
 
   /* ---------------- Comparison ---------------- */
@@ -365,5 +448,5 @@ const Speech = (() => {
     return 1 - levenshtein(a2, b2) / Math.max(a2.length, b2.length);
   }
 
-  return { speak, stop, startRecognition, similarity, normalize, engine, releaseMic };
+  return { speak, stop, listen, similarity, normalize, engine, releaseMic };
 })();

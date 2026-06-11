@@ -1,19 +1,24 @@
 /* listen.js — "Listen and repeat" mode.
  *
- * The tutor speaks a phrase; the learner repeats it. Success → a slightly
- * harder phrase. First failure → the same phrase replayed slowly and
- * carefully. Second failure → an easier phrase.
+ * The tutor speaks a phrase; recording starts automatically and stops by
+ * itself when the learner falls silent. Scoring (character-level Levenshtein
+ * similarity on normalized text) uses two tiers:
+ *   - >= ADVANCE (75%): good enough — move on to the next phrase, same level;
+ *   - >= LEVELUP (92%): excellent — move on AND raise the difficulty.
+ * First failure → the same phrase replayed slowly and carefully.
+ * Second failure → an easier phrase.
  */
 "use strict";
 
 const Listen = (() => {
-  const PASS = 0.8; // similarity threshold counted as a successful repeat
-  const NEAR = 0.55; // above this we encourage another try at the same phrase
+  const ADVANCE = 0.75; // move on to a new phrase at the same level
+  const LEVELUP = 0.92; // near-perfect repeat: difficulty goes up
 
   let current = null; // {phrase, translation, new_words}
   let failCount = 0;
   let streak = 0;
-  let recording = null; // stop() fn while recording
+  let listener = null; // active Speech.listen() handle
+  let sessionOn = false;
   let busy = false;
 
   function level() {
@@ -92,6 +97,8 @@ const Listen = (() => {
     return out;
   }
 
+  /* ---------------- play → record → evaluate loop ---------------- */
+
   async function present(slow = false) {
     const box = document.getElementById("lr-phrase-box");
     box.classList.remove("hidden");
@@ -110,53 +117,69 @@ const Listen = (() => {
     }
   }
 
+  function recordBtn() {
+    return document.getElementById("lr-record");
+  }
+
+  function setRecordUI(state) {
+    const btn = recordBtn();
+    btn.classList.toggle("armed", state === "listening" || state === "hearing");
+    btn.disabled = state === "transcribing";
+    btn.textContent =
+      state === "listening" || state === "hearing"
+        ? "🎙 Listening — speak now (click when done)"
+        : state === "transcribing"
+          ? "⏳ Transcribing…"
+          : "🎙 Record";
+  }
+
+  /** Start recording automatically; resolves after evaluation. */
+  async function startListening() {
+    if (listener || !current || !sessionOn) return;
+    try {
+      listener = await Speech.listen({ onStatus: setRecordUI });
+    } catch (e) {
+      listener = null;
+      setRecordUI("idle");
+      App.toast(e.message);
+      return;
+    }
+    let heard;
+    try {
+      heard = await listener.result;
+    } catch (e) {
+      App.toast(e.message);
+      heard = "";
+    }
+    listener = null;
+    setRecordUI("idle");
+    if (heard === null) return; // cancelled (replay, skip, navigation…)
+    await evaluate(heard || "");
+  }
+
+  function cancelListening() {
+    if (listener) listener.cancel();
+  }
+
   async function startSession() {
     if (busy) return;
     busy = true;
+    sessionOn = true;
     App.busy("Composing a phrase…");
     try {
       current = await nextPhrase();
       failCount = 0;
       document.getElementById("lr-start").classList.add("hidden");
-      document.getElementById("lr-record").classList.remove("hidden");
+      recordBtn().classList.remove("hidden");
       document.getElementById("lr-skip").classList.remove("hidden");
       App.busy(false);
       await present(false);
+      busy = false;
+      startListening();
     } catch (e) {
       App.busy(false);
       App.toast(e.message);
-    } finally {
       busy = false;
-    }
-  }
-
-  async function toggleRecord() {
-    const btn = document.getElementById("lr-record");
-    if (!current) return;
-    if (recording) {
-      // stop & evaluate
-      btn.classList.remove("armed");
-      btn.textContent = "🎙 Click to record your repeat";
-      btn.disabled = true;
-      try {
-        const stop = recording;
-        recording = null;
-        const heard = await stop();
-        await evaluate(heard);
-      } catch (e) {
-        App.toast(e.message);
-      } finally {
-        btn.disabled = false;
-      }
-    } else {
-      Speech.stop();
-      try {
-        recording = await Speech.startRecognition();
-        btn.classList.add("armed");
-        btn.textContent = "⏹ Recording… click to stop";
-      } catch (e) {
-        App.toast(e.message);
-      }
     }
   }
 
@@ -164,42 +187,45 @@ const Listen = (() => {
     const p = Store.profile;
     p.listen.attempts++;
     document.getElementById("lr-heard").textContent = heard ? `Heard: “${heard}”` : "(heard nothing)";
-    const sim = Speech.similarity(current.phrase, heard || "");
+    const sim = Speech.similarity(current.phrase, heard);
+    const pct = Math.round(sim * 100);
+    const lvl = level();
 
-    if (sim >= PASS) {
+    if (sim >= ADVANCE) {
+      // passed — credit vocabulary either way
       p.listen.successes++;
       streak++;
-      setFeedback(`✅ Excellent! (${Math.round(sim * 100)}% match)`, "good");
-      // credit learning words contained in the phrase
       const norm = " " + Speech.normalize(current.phrase) + " ";
       for (const w of Object.keys(p.vocab.learning)) {
         if (norm.includes(" " + Speech.normalize(w) + " ")) Vocab.creditWord(w);
       }
-      const lvl = level();
-      Store.updateSkill("listening", Math.min(100, lvl * 10), 0.15);
-      Store.updateSkill("pronunciation", Math.min(100, lvl * 10), 0.15);
-      setLevel(lvl + 0.4);
-      // offer new words from the phrase to the learning list
       if (current.new_words?.length) {
         const n = Vocab.addNewWords(current.new_words);
         if (n) App.toast(`Added ${n} new word${n > 1 ? "s" : ""} to your Learning list.`);
       }
-      await pause(900);
+
+      if (sim >= LEVELUP) {
+        setFeedback(`✅ Excellent — ${pct}% match. Difficulty up!`, "good");
+        Store.updateSkill("listening", Math.min(100, lvl * 10), 0.15);
+        Store.updateSkill("pronunciation", Math.min(100, lvl * 10), 0.15);
+        setLevel(lvl + 0.4);
+      } else {
+        setFeedback(`👍 Good enough — ${pct}% match. New phrase at the same level.`, "good");
+        Store.updateSkill("listening", Math.min(100, lvl * 10 - 5), 0.08);
+        Store.updateSkill("pronunciation", Math.min(100, lvl * 10 - 5), 0.08);
+      }
+      await pause(1100);
       await advance();
     } else if (failCount === 0) {
       failCount = 1;
-      setFeedback(
-        sim >= NEAR
-          ? `🙂 Almost (${Math.round(sim * 100)}%). Listen again — slowly this time.`
-          : `🤔 Not quite. Listen again — slowly and carefully.`,
-        "meh"
-      );
-      Store.updateSkill("listening", Math.max(0, level() * 10 - 15), 0.05);
+      setFeedback(`🤔 ${pct}% — not quite. Listen again, slowly and carefully.`, "meh");
+      Store.updateSkill("listening", Math.max(0, lvl * 10 - 15), 0.05);
       await pause(700);
       await present(true); // repeat slowly and carefully
+      startListening();
     } else {
       setFeedback("💪 No problem — let's try something a little simpler.", "bad");
-      setLevel(level() - 1);
+      setLevel(lvl - 1);
       Store.updateSkill("listening", Math.max(0, level() * 10 - 10), 0.1);
       Store.updateSkill("pronunciation", Math.max(0, level() * 10 - 10), 0.1);
       streak = 0;
@@ -213,18 +239,38 @@ const Listen = (() => {
   async function advance() {
     if (busy) return;
     busy = true;
+    cancelListening();
     App.busy("Composing the next phrase…");
     try {
       current = await nextPhrase();
       failCount = 0;
       App.busy(false);
       await present(false);
+      busy = false;
+      startListening();
     } catch (e) {
       App.busy(false);
       App.toast(e.message);
-    } finally {
       busy = false;
     }
+  }
+
+  async function replay(slow) {
+    if (!current) return;
+    cancelListening();
+    try {
+      await Speech.speak(current.phrase, { slow });
+    } catch (e) {
+      App.toast(e.message);
+    }
+    startListening();
+  }
+
+  /** Cancel any active recording/audio (e.g. when navigating away).
+   *  The session itself stays on; clicking Record resumes the loop. */
+  function stopAll() {
+    cancelListening();
+    Speech.stop();
   }
 
   function setFeedback(msg, cls) {
@@ -243,11 +289,13 @@ const Listen = (() => {
 
   function init() {
     document.getElementById("lr-start").onclick = startSession;
-    document.getElementById("lr-record").onclick = toggleRecord;
+    document.getElementById("lr-record").onclick = () => {
+      if (listener) listener.stop(); // finish the take now
+      else startListening(); // manual restart if auto-record was cancelled
+    };
     document.getElementById("lr-skip").onclick = advance;
-    document.getElementById("lr-replay").onclick = () => current && Speech.speak(current.phrase);
-    document.getElementById("lr-replay-slow").onclick = () =>
-      current && Speech.speak(current.phrase, { slow: true });
+    document.getElementById("lr-replay").onclick = () => replay(false);
+    document.getElementById("lr-replay-slow").onclick = () => replay(true);
     document.getElementById("lr-show").onclick = () => {
       document.getElementById("lr-phrase").classList.remove("blurred");
       document.getElementById("lr-translation").classList.remove("hidden");
@@ -259,5 +307,5 @@ const Listen = (() => {
     document.getElementById("lr-level").textContent = Math.round(level());
   }
 
-  return { init, refresh };
+  return { init, refresh, stopAll };
 })();
