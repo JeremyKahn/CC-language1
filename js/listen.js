@@ -11,8 +11,15 @@
 "use strict";
 
 const Listen = (() => {
-  const ADVANCE = 0.75; // move on to a new phrase at the same level
-  const LEVELUP = 0.92; // near-perfect repeat: difficulty goes up
+  // Cutoffs are user-adjustable sliders, stored per user+language:
+  //   passCut (70-90):       move on to a new phrase at the same level
+  //   excellentCut (90-100): near-perfect repeat — difficulty goes up
+  function passCut() {
+    return (Store.profile.listen.passCut ?? 75) / 100;
+  }
+  function excellentCut() {
+    return (Store.profile.listen.excellentCut ?? 92) / 100;
+  }
 
   let current = null; // {phrase, translation, new_words}
   let failCount = 0;
@@ -99,17 +106,22 @@ const Listen = (() => {
 
   /* ---------------- play → record → evaluate loop ---------------- */
 
-  async function present(slow = false) {
+  /** Say the current phrase. reveal=true keeps the text and the learner's
+   *  transcript visible (used for the slow replay after a miss — the learner
+   *  has already seen the answer, so they can read along). */
+  async function present(slow = false, reveal = false) {
     const box = document.getElementById("lr-phrase-box");
     box.classList.remove("hidden");
     const ph = document.getElementById("lr-phrase");
     ph.textContent = current.phrase;
-    ph.classList.add("blurred"); // hidden until the learner asks — this is listening practice
+    ph.classList.toggle("blurred", !reveal); // hidden by default — listening practice
     const tr = document.getElementById("lr-translation");
     tr.textContent = current.translation;
     tr.classList.add("hidden");
-    setFeedback(null);
-    document.getElementById("lr-heard").textContent = "";
+    if (!reveal) {
+      setFeedback(null);
+      document.getElementById("lr-heard").textContent = "";
+    }
     try {
       await Speech.speak(current.phrase, { slow });
     } catch (e) {
@@ -172,6 +184,7 @@ const Listen = (() => {
       document.getElementById("lr-start").classList.add("hidden");
       recordBtn().classList.remove("hidden");
       document.getElementById("lr-skip").classList.remove("hidden");
+      document.getElementById("lr-end").classList.remove("hidden");
       App.busy(false);
       await present(false);
       busy = false;
@@ -183,15 +196,34 @@ const Listen = (() => {
     }
   }
 
+  function endSession() {
+    sessionOn = false;
+    cancelListening();
+    Speech.stop();
+    current = null;
+    streak = 0;
+    document.getElementById("lr-start").classList.remove("hidden");
+    recordBtn().classList.add("hidden");
+    document.getElementById("lr-skip").classList.add("hidden");
+    document.getElementById("lr-end").classList.add("hidden");
+    document.getElementById("lr-phrase-box").classList.add("hidden");
+    document.getElementById("lr-streak").textContent = "";
+    setFeedback("Session ended — nice work! 👋", "good");
+  }
+
   async function evaluate(heard) {
     const p = Store.profile;
     p.listen.attempts++;
-    document.getElementById("lr-heard").textContent = heard ? `Heard: “${heard}”` : "(heard nothing)";
+    // reveal the original phrase and show the transcript right below it
+    document.getElementById("lr-phrase").classList.remove("blurred");
+    document.getElementById("lr-heard").textContent = heard
+      ? `🎙 You said: “${heard}”`
+      : "🎙 (heard nothing)";
     const sim = Speech.similarity(current.phrase, heard);
     const pct = Math.round(sim * 100);
     const lvl = level();
 
-    if (sim >= ADVANCE) {
+    if (sim >= passCut()) {
       // passed — credit vocabulary either way
       p.listen.successes++;
       streak++;
@@ -204,7 +236,7 @@ const Listen = (() => {
         if (n) App.toast(`Added ${n} new word${n > 1 ? "s" : ""} to your Learning list.`);
       }
 
-      if (sim >= LEVELUP) {
+      if (sim >= excellentCut()) {
         setFeedback(`✅ Excellent — ${pct}% match. Difficulty up!`, "good");
         Store.updateSkill("listening", Math.min(100, lvl * 10), 0.15);
         Store.updateSkill("pronunciation", Math.min(100, lvl * 10), 0.15);
@@ -220,8 +252,8 @@ const Listen = (() => {
       failCount = 1;
       setFeedback(`🤔 ${pct}% — not quite. Listen again, slowly and carefully.`, "meh");
       Store.updateSkill("listening", Math.max(0, lvl * 10 - 15), 0.05);
-      await pause(700);
-      await present(true); // repeat slowly and carefully
+      await pause(1500); // give the learner a moment to compare the two texts
+      await present(true, true); // repeat slowly, keeping phrase + transcript visible
       startListening();
     } else {
       setFeedback("💪 No problem — let's try something a little simpler.", "bad");
@@ -237,7 +269,7 @@ const Listen = (() => {
   }
 
   async function advance() {
-    if (busy) return;
+    if (busy || !sessionOn) return;
     busy = true;
     cancelListening();
     App.busy("Composing the next phrase…");
@@ -287,8 +319,19 @@ const Listen = (() => {
     return new Promise((r) => setTimeout(r, ms));
   }
 
+  function wireCutoff(id, key) {
+    const input = document.getElementById(id);
+    const label = document.getElementById(id + "-val");
+    input.oninput = () => {
+      Store.profile.listen[key] = +input.value;
+      Store.saveProfile();
+      label.textContent = input.value + "%";
+    };
+  }
+
   function init() {
     document.getElementById("lr-start").onclick = startSession;
+    document.getElementById("lr-end").onclick = endSession;
     document.getElementById("lr-record").onclick = () => {
       if (listener) listener.stop(); // finish the take now
       else startListening(); // manual restart if auto-record was cancelled
@@ -300,11 +343,21 @@ const Listen = (() => {
       document.getElementById("lr-phrase").classList.remove("blurred");
       document.getElementById("lr-translation").classList.remove("hidden");
     };
+    wireCutoff("lr-cut-excellent", "excellentCut");
+    wireCutoff("lr-cut-pass", "passCut");
   }
 
   function refresh() {
     if (!Store.profile) return;
     document.getElementById("lr-level").textContent = Math.round(level());
+    for (const [id, key] of [
+      ["lr-cut-excellent", "excellentCut"],
+      ["lr-cut-pass", "passCut"],
+    ]) {
+      const v = Store.profile.listen[key] ?? (key === "passCut" ? 75 : 92);
+      document.getElementById(id).value = v;
+      document.getElementById(id + "-val").textContent = v + "%";
+    }
   }
 
   return { init, refresh, stopAll };

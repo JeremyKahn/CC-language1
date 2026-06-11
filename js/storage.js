@@ -62,7 +62,7 @@ const Store = (() => {
     return {
       skills: { grammar: 0, vocabulary: 0, listening: 0, pronunciation: 0, reading: 0 },
       vocab: { mastered: {}, learning: {} }, // word -> {translation, addedAt, streak}
-      listen: { level: 1, successes: 0, attempts: 0, recent: [] },
+      listen: { level: 1, successes: 0, attempts: 0, recent: [], passCut: 75, excellentCut: 92 },
       grammar: { curriculum: [], current: 0, progress: {} }, // progress[idx] = {taught, score, done}
       reading: { sessions: 0 },
     };

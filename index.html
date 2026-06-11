@@ -66,9 +66,20 @@
       <div>Difficulty level: <b id="lr-level">1</b> / 10</div>
       <div class="muted" id="lr-streak"></div>
     </div>
+    <div class="row gap wrap small cutoffs">
+      <label>Difficulty-up cutoff (excellent)
+        <input type="range" id="lr-cut-excellent" min="90" max="100" step="1" value="92">
+        <span id="lr-cut-excellent-val">92%</span>
+      </label>
+      <label>Next-phrase cutoff (pass)
+        <input type="range" id="lr-cut-pass" min="70" max="90" step="1" value="75">
+        <span id="lr-cut-pass-val">75%</span>
+      </label>
+    </div>
     <div id="lr-stage">
       <div id="lr-phrase-box" class="phrase-box hidden">
         <div id="lr-phrase" class="phrase blurred">…</div>
+        <div id="lr-heard" class="heard"></div>
         <div id="lr-translation" class="translation hidden"></div>
         <div class="row center gap">
           <button id="lr-replay" class="btn">🔊 Play again</button>
@@ -80,9 +91,9 @@
         <button id="lr-start" class="btn primary big">▶ Start session</button>
         <button id="lr-record" class="btn record big hidden">🎙 Record</button>
         <button id="lr-skip" class="btn ghost hidden">Skip ↷</button>
+        <button id="lr-end" class="btn ghost hidden">⏹ End session</button>
       </div>
       <div id="lr-feedback" class="feedback hidden"></div>
-      <div id="lr-heard" class="muted center"></div>
     </div>
   </div>
   <div class="card muted small">

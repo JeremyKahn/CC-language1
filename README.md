@@ -62,8 +62,14 @@ scripts too), with two tiers:
   native-level sentences).
 - **≥ 75 % — good enough**: next phrase at the **same** level, so you stay at
   an appropriate difficulty until your repeats are consistently near-perfect.
-- Below 75 % → the same phrase is repeated **slowly and carefully**; miss
-  again and you get a **simpler** phrase.
+- Below 75 % → the same phrase is repeated **slowly and carefully** (with the
+  text and your transcript revealed so you can compare); miss again and you
+  get a **simpler** phrase.
+
+Both cutoffs are adjustable with sliders on the page (pass: 70–90 %,
+excellent: 90–100 %), saved per user + language. After each take the original
+phrase is revealed with your transcript right below it. **End session** stops
+the loop whenever you're done.
 
 Phrases are built preferentially from your mastered/learning words; new words
 that appear are offered into your learning list, and learning words you repeat
