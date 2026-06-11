@@ -106,27 +106,32 @@ const Listen = (() => {
 
   /* ---------------- play → record → evaluate loop ---------------- */
 
-  /** Say the current phrase. reveal=true keeps the text and the learner's
-   *  transcript visible (used for the slow replay after a miss — the learner
-   *  has already seen the answer, so they can read along). */
-  async function present(slow = false, reveal = false) {
+  /** Say the current phrase (text blurred — this is listening practice). */
+  async function present(slow = false) {
     const box = document.getElementById("lr-phrase-box");
     box.classList.remove("hidden");
     const ph = document.getElementById("lr-phrase");
     ph.textContent = current.phrase;
-    ph.classList.toggle("blurred", !reveal); // hidden by default — listening practice
+    ph.classList.add("blurred");
     const tr = document.getElementById("lr-translation");
     tr.textContent = current.translation;
     tr.classList.add("hidden");
-    if (!reveal) {
-      setFeedback(null);
-      document.getElementById("lr-heard").textContent = "";
-    }
+    setFeedback(null);
+    document.getElementById("lr-heard").textContent = "";
     try {
       await Speech.speak(current.phrase, { slow });
     } catch (e) {
       App.toast(e.message);
     }
+  }
+
+  /** Briefly show the original phrase with the learner's transcript below it
+   *  (done only when moving on to the next phrase). */
+  function reveal(heard) {
+    document.getElementById("lr-phrase").classList.remove("blurred");
+    document.getElementById("lr-heard").textContent = heard
+      ? `🎙 You said: “${heard}”`
+      : "🎙 (heard nothing)";
   }
 
   function recordBtn() {
@@ -214,11 +219,6 @@ const Listen = (() => {
   async function evaluate(heard) {
     const p = Store.profile;
     p.listen.attempts++;
-    // reveal the original phrase and show the transcript right below it
-    document.getElementById("lr-phrase").classList.remove("blurred");
-    document.getElementById("lr-heard").textContent = heard
-      ? `🎙 You said: “${heard}”`
-      : "🎙 (heard nothing)";
     const sim = Speech.similarity(current.phrase, heard);
     const pct = Math.round(sim * 100);
     const lvl = level();
@@ -246,14 +246,16 @@ const Listen = (() => {
         Store.updateSkill("listening", Math.min(100, lvl * 10 - 5), 0.08);
         Store.updateSkill("pronunciation", Math.min(100, lvl * 10 - 5), 0.08);
       }
-      await pause(1100);
+      reveal(heard); // brief look at the phrase + transcript before moving on
+      await pause(1500);
       await advance();
     } else if (failCount === 0) {
+      // same phrase again, slowly — the text stays hidden (listening practice)
       failCount = 1;
       setFeedback(`🤔 ${pct}% — not quite. Listen again, slowly and carefully.`, "meh");
       Store.updateSkill("listening", Math.max(0, lvl * 10 - 15), 0.05);
-      await pause(1500); // give the learner a moment to compare the two texts
-      await present(true, true); // repeat slowly, keeping phrase + transcript visible
+      await pause(700);
+      await present(true);
       startListening();
     } else {
       setFeedback("💪 No problem — let's try something a little simpler.", "bad");
@@ -261,7 +263,8 @@ const Listen = (() => {
       Store.updateSkill("listening", Math.max(0, level() * 10 - 10), 0.1);
       Store.updateSkill("pronunciation", Math.max(0, level() * 10 - 10), 0.1);
       streak = 0;
-      await pause(1000);
+      reveal(heard); // brief look at the phrase + transcript before moving on
+      await pause(1500);
       await advance();
     }
     document.getElementById("lr-streak").textContent = streak >= 2 ? `🔥 streak: ${streak}` : "";
