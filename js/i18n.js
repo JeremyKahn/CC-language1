@@ -1,0 +1,374 @@
+/* i18n.js — Optional interface localization into the language being learned.
+ *
+ * One canonical English string table (EN) is the source of truth. Every static
+ * UI string is tagged in the HTML with data-i18n / data-i18n-ph (placeholder) /
+ * data-i18n-title (title attr); dynamic strings (feedback, toasts) call t().
+ *
+ * French is shipped built-in (instant, offline, hand-checked). For any other
+ * language, the whole table is translated by one cached Claude call the first
+ * time the option is enabled, then stored in localStorage.
+ */
+"use strict";
+
+const I18N = (() => {
+  const EN = {
+    // header / nav
+    "chip.title": "Click to switch user / language",
+    "settings.title": "Settings",
+    "tab.dashboard": "📊 Dashboard",
+    "tab.listen": "🎧 Listen & Repeat",
+    "tab.reading": "📖 Reading",
+    "tab.vocab": "📚 Vocabulary",
+    "tab.grammar": "🧩 Grammar",
+
+    // dashboard
+    "dash.title": "Your progress in {lang}",
+    "dash.mastered": "words mastered",
+    "dash.learning": "words learning",
+    "dash.listenLevel": "listen & repeat level",
+    "dash.grammarMastered": "grammar elements mastered",
+    "dash.gettingStarted": "Getting started",
+    "dash.step1": "Open ⚙️ Settings and paste your Anthropic API key (required) and, ideally, an OpenAI API key for high-quality speech.",
+    "dash.step2": "Add a few words you know to Vocabulary → Mastered, and words you're working on to Learning (or just start practising — the app builds your lists as you go).",
+    "dash.step3": "Try Listen & Repeat to train listening and pronunciation, Reading for custom texts, and Grammar for a structured course.",
+    "skill.grammar": "Grammar",
+    "skill.vocabulary": "Vocabulary",
+    "skill.listening": "Listening comprehension",
+    "skill.pronunciation": "Pronunciation",
+    "skill.reading": "Reading comprehension",
+
+    // listen & repeat
+    "listen.h2": "Listen & Repeat",
+    "listen.difficulty": "Difficulty level:",
+    "listen.cutExcellent": "Difficulty-up cutoff (excellent)",
+    "listen.cutPass": "Next-phrase cutoff (pass)",
+    "listen.replay": "🔊 Play again",
+    "listen.replaySlow": "🐢 Slowly",
+    "listen.show": "👁 Show text",
+    "listen.start": "▶ Start session",
+    "listen.record": "🎙 Record",
+    "listen.skip": "Skip ↷",
+    "listen.end": "⏹ End session",
+    "listen.help": "The tutor says a phrase and the microphone opens automatically — just repeat it; recording stops by itself when you finish speaking. A near-perfect repeat raises the difficulty; a decent one moves on at the same level. If you miss, the phrase is repeated slowly; if you miss again, you get a simpler one.",
+    // listen — dynamic
+    "listen.recording": "🎙 Listening — speak now (click when done)",
+    "listen.transcribing": "⏳ Transcribing…",
+    "listen.youSaid": "🎙 You said: “{heard}”",
+    "listen.heardNothing": "🎙 (heard nothing)",
+    "listen.excellent": "✅ Excellent — {pct}% match. Difficulty up!",
+    "listen.good": "👍 Good enough — {pct}% match. New phrase at the same level.",
+    "listen.notQuiteSlow": "🤔 {pct}% — not quite. Listen again, slowly and carefully.",
+    "listen.notQuite": "🤔 {pct}% — not quite.",
+    "listen.simpler": "💪 No problem — let's try something a little simpler.",
+    "listen.streak": "🔥 streak: {n}",
+    "listen.composing": "Composing a phrase…",
+    "listen.ending": "Ending after this phrase…",
+    "listen.newWords": "Added {n} new word(s) to your Learning list.",
+
+    // reading
+    "reading.h2": "Reading practice",
+    "reading.length": "Length (words)",
+    "reading.ratio": "Share of \"learning\" words",
+    "reading.topic": "Topic (optional)",
+    "reading.topicPh": "e.g. a trip to the market, football, a folk tale…",
+    "reading.generate": "✍️ Generate text",
+    "reading.pdf": "⬇️ Download PDF",
+    "reading.readAloud": "🔊 Read aloud",
+    "reading.stop": "⏹ Stop",
+    "reading.glossary": "Glossary",
+    "reading.translateAll": "🌐 Translate all",
+    "reading.hide": "🙈 Hide",
+    "reading.show": "👁 Show",
+    "reading.addAll": "+ all → Learning",
+    "reading.clear": "🗑 Clear",
+    "reading.clickHint": "Click any word in the text below to add it to the glossary.",
+    "reading.glossEmpty": "— glossary is empty —",
+    "reading.understand": "How well did you understand it?",
+    "reading.preparing": "Preparing audio…",
+
+    // vocab
+    "vocab.h2": "Vocabulary",
+    "vocab.wordPh": "word in target language",
+    "vocab.transPh": "translation (or leave blank → AI)",
+    "vocab.toLearning": "→ Learning",
+    "vocab.toMastered": "→ Mastered",
+    "vocab.add": "Add",
+    "vocab.bulk": "Bulk add…",
+    "vocab.bulkPh": "One word per line (optionally: word = translation). Missing translations are filled in by AI.",
+    "vocab.bulkGo": "Add all to Learning",
+    "vocab.learning": "Learning",
+    "vocab.mastered": "Mastered",
+    "vocab.anki": "🃏 Anki deck",
+    "vocab.ankiHint": "Anki export downloads a ready-to-import .apkg deck (cards: word → translation + example sentence).",
+    "vocab.empty": "No words yet.",
+
+    // grammar
+    "grammar.h2": "Grammar course",
+    "grammar.intro": "The AI builds a sequenced grammar curriculum for your language, teaches each element with examples, then tests you on it.",
+    "grammar.generate": "🧩 Generate curriculum",
+    "grammar.curriculum": "Curriculum",
+    "grammar.regen": "↻ Regenerate curriculum",
+    "grammar.testMe": "📝 Test me on this",
+    "grammar.exercises": "Exercises —",
+
+    // settings modal
+    "set.title": "Settings",
+    "set.anthropic": "Anthropic API key (text generation — required)",
+    "set.model": "Claude model",
+    "set.openai": "OpenAI API key (speech — recommended)",
+    "set.speech": "Speech engine",
+    "set.voice": "OpenAI voice",
+    "set.test": "🔊 Test",
+    "set.uiInLang": "Show the interface in the language I'm learning",
+    "set.keysNote": "Keys are stored only in this browser's localStorage and sent only to api.anthropic.com / api.openai.com.",
+    "set.cancel": "Cancel",
+    "set.save": "Save",
+
+    // profile modal
+    "prof.title": "Who is learning what?",
+    "prof.user": "Your name",
+    "prof.userPh": "e.g. Jeremy",
+    "prof.lang": "Language to learn",
+    "prof.customName": "Language name",
+    "prof.customCode": "BCP-47 code",
+    "prof.start": "Start learning",
+
+    // misc toasts
+    "toast.settingsSaved": "Settings saved.",
+    "toast.translatingUI": "Translating the interface…",
+    "toast.uiReady": "Interface language ready.",
+  };
+
+  // Hand-checked French translation (built-in: instant, works offline).
+  const FR = {
+    "chip.title": "Cliquez pour changer d'utilisateur / de langue",
+    "settings.title": "Paramètres",
+    "tab.dashboard": "📊 Tableau de bord",
+    "tab.listen": "🎧 Écouter et répéter",
+    "tab.reading": "📖 Lecture",
+    "tab.vocab": "📚 Vocabulaire",
+    "tab.grammar": "🧩 Grammaire",
+
+    "dash.title": "Votre progression en {lang}",
+    "dash.mastered": "mots maîtrisés",
+    "dash.learning": "mots en apprentissage",
+    "dash.listenLevel": "niveau écouter et répéter",
+    "dash.grammarMastered": "éléments de grammaire maîtrisés",
+    "dash.gettingStarted": "Pour commencer",
+    "dash.step1": "Ouvrez ⚙️ Paramètres et collez votre clé API Anthropic (obligatoire) et, idéalement, une clé API OpenAI pour une voix de qualité.",
+    "dash.step2": "Ajoutez quelques mots que vous connaissez à Vocabulaire → Maîtrisés, et les mots que vous travaillez à En apprentissage (ou commencez simplement à pratiquer — l'application construit vos listes au fur et à mesure).",
+    "dash.step3": "Essayez Écouter et répéter pour travailler la compréhension orale et la prononciation, Lecture pour des textes personnalisés, et Grammaire pour un cours structuré.",
+    "skill.grammar": "Grammaire",
+    "skill.vocabulary": "Vocabulaire",
+    "skill.listening": "Compréhension orale",
+    "skill.pronunciation": "Prononciation",
+    "skill.reading": "Compréhension écrite",
+
+    "listen.h2": "Écouter et répéter",
+    "listen.difficulty": "Niveau de difficulté :",
+    "listen.cutExcellent": "Seuil de montée en difficulté (excellent)",
+    "listen.cutPass": "Seuil pour la phrase suivante (réussite)",
+    "listen.replay": "🔊 Réécouter",
+    "listen.replaySlow": "🐢 Lentement",
+    "listen.show": "👁 Afficher le texte",
+    "listen.start": "▶ Démarrer la séance",
+    "listen.record": "🎙 Enregistrer",
+    "listen.skip": "Passer ↷",
+    "listen.end": "⏹ Terminer la séance",
+    "listen.help": "Le tuteur prononce une phrase et le micro s'ouvre automatiquement — répétez-la ; l'enregistrement s'arrête tout seul quand vous avez fini de parler. Une répétition presque parfaite augmente la difficulté ; une répétition correcte passe à la suivante au même niveau. Si vous échouez, la phrase est répétée lentement ; si vous échouez encore, vous en recevez une plus simple.",
+    "listen.recording": "🎙 À l'écoute — parlez maintenant (cliquez quand c'est fini)",
+    "listen.transcribing": "⏳ Transcription…",
+    "listen.youSaid": "🎙 Vous avez dit : « {heard} »",
+    "listen.heardNothing": "🎙 (rien entendu)",
+    "listen.excellent": "✅ Excellent — {pct}% de correspondance. Difficulté augmentée !",
+    "listen.good": "👍 Assez bien — {pct}% de correspondance. Nouvelle phrase au même niveau.",
+    "listen.notQuiteSlow": "🤔 {pct}% — pas tout à fait. Réécoutez, lentement et attentivement.",
+    "listen.notQuite": "🤔 {pct}% — pas tout à fait.",
+    "listen.simpler": "💪 Pas de souci — essayons quelque chose d'un peu plus simple.",
+    "listen.streak": "🔥 série : {n}",
+    "listen.composing": "Composition d'une phrase…",
+    "listen.ending": "Fin après cette phrase…",
+    "listen.newWords": "{n} nouveau(x) mot(s) ajouté(s) à votre liste En apprentissage.",
+
+    "reading.h2": "Exercice de lecture",
+    "reading.length": "Longueur (mots)",
+    "reading.ratio": "Proportion de mots « en apprentissage »",
+    "reading.topic": "Sujet (facultatif)",
+    "reading.topicPh": "ex. une visite au marché, le football, un conte…",
+    "reading.generate": "✍️ Générer un texte",
+    "reading.pdf": "⬇️ Télécharger le PDF",
+    "reading.readAloud": "🔊 Lire à voix haute",
+    "reading.stop": "⏹ Arrêter",
+    "reading.glossary": "Glossaire",
+    "reading.translateAll": "🌐 Tout traduire",
+    "reading.hide": "🙈 Masquer",
+    "reading.show": "👁 Afficher",
+    "reading.addAll": "+ tout → En apprentissage",
+    "reading.clear": "🗑 Vider",
+    "reading.clickHint": "Cliquez sur un mot du texte ci-dessous pour l'ajouter au glossaire.",
+    "reading.glossEmpty": "— le glossaire est vide —",
+    "reading.understand": "Avez-vous bien compris le texte ?",
+    "reading.preparing": "Préparation de l'audio…",
+
+    "vocab.h2": "Vocabulaire",
+    "vocab.wordPh": "mot dans la langue cible",
+    "vocab.transPh": "traduction (ou laissez vide → IA)",
+    "vocab.toLearning": "→ En apprentissage",
+    "vocab.toMastered": "→ Maîtrisés",
+    "vocab.add": "Ajouter",
+    "vocab.bulk": "Ajout en lot…",
+    "vocab.bulkPh": "Un mot par ligne (au besoin : mot = traduction). Les traductions manquantes sont fournies par l'IA.",
+    "vocab.bulkGo": "Tout ajouter à En apprentissage",
+    "vocab.learning": "En apprentissage",
+    "vocab.mastered": "Maîtrisés",
+    "vocab.anki": "🃏 Paquet Anki",
+    "vocab.ankiHint": "L'export Anki télécharge un paquet .apkg prêt à importer (cartes : mot → traduction + phrase d'exemple).",
+    "vocab.empty": "Aucun mot pour l'instant.",
+
+    "grammar.h2": "Cours de grammaire",
+    "grammar.intro": "L'IA construit un programme de grammaire progressif pour votre langue, enseigne chaque élément avec des exemples, puis vous teste dessus.",
+    "grammar.generate": "🧩 Générer le programme",
+    "grammar.curriculum": "Programme",
+    "grammar.regen": "↻ Régénérer le programme",
+    "grammar.testMe": "📝 Testez-moi là-dessus",
+    "grammar.exercises": "Exercices —",
+
+    "set.title": "Paramètres",
+    "set.anthropic": "Clé API Anthropic (génération de texte — obligatoire)",
+    "set.model": "Modèle Claude",
+    "set.openai": "Clé API OpenAI (voix — recommandée)",
+    "set.speech": "Moteur vocal",
+    "set.voice": "Voix OpenAI",
+    "set.test": "🔊 Tester",
+    "set.uiInLang": "Afficher l'interface dans la langue que j'apprends",
+    "set.keysNote": "Les clés sont stockées uniquement dans le localStorage de ce navigateur et envoyées uniquement à api.anthropic.com / api.openai.com.",
+    "set.cancel": "Annuler",
+    "set.save": "Enregistrer",
+
+    "prof.title": "Qui apprend quoi ?",
+    "prof.user": "Votre nom",
+    "prof.userPh": "ex. Jeremy",
+    "prof.lang": "Langue à apprendre",
+    "prof.customName": "Nom de la langue",
+    "prof.customCode": "Code BCP-47",
+    "prof.start": "Commencer à apprendre",
+
+    "toast.settingsSaved": "Paramètres enregistrés.",
+    "toast.translatingUI": "Traduction de l'interface…",
+    "toast.uiReady": "Langue de l'interface prête.",
+  };
+
+  const BUILTIN = { French: FR };
+
+  let dict = EN; // active dictionary
+
+  function interpolate(s, vars) {
+    if (!vars) return s;
+    return s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m));
+  }
+
+  function t(key, vars) {
+    const s = dict[key] != null ? dict[key] : EN[key] != null ? EN[key] : key;
+    return interpolate(s, vars);
+  }
+
+  /** Whether the UI is currently shown in the target language. */
+  function active() {
+    return dict !== EN;
+  }
+
+  /** Apply all tagged static strings in the DOM. */
+  function applyStatic(root = document) {
+    root.querySelectorAll("[data-i18n]").forEach((el) => {
+      el.textContent = t(el.dataset.i18n);
+    });
+    root.querySelectorAll("[data-i18n-ph]").forEach((el) => {
+      el.placeholder = t(el.dataset.i18nPh);
+    });
+    root.querySelectorAll("[data-i18n-title]").forEach((el) => {
+      el.title = t(el.dataset.i18nTitle);
+    });
+  }
+
+  function cacheKey(langName) {
+    return "linguaforge.i18n." + langName;
+  }
+
+  /** Translate the whole EN table for a language via one Claude call. */
+  async function fetchTranslation(langName) {
+    const keys = Object.keys(EN);
+    const out = await AI.call({
+      system:
+        `You localize a language-learning app's interface into ${langName}. ` +
+        `Translate naturally and concisely, as a native UI would read. Keep any leading emoji and ` +
+        `the {placeholders} in braces exactly as-is. Keep it short enough to fit buttons and labels.`,
+      user:
+        `Translate each interface string into ${langName}. Return a translation for every id.\n\n` +
+        keys.map((k) => `${k}: ${EN[k]}`).join("\n"),
+      schema: {
+        type: "object",
+        properties: {
+          strings: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { id: { type: "string" }, text: { type: "string" } },
+              required: ["id", "text"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["strings"],
+        additionalProperties: false,
+      },
+      maxTokens: 16000,
+    });
+    const d = {};
+    for (const { id, text } of out.strings) if (id in EN) d[id] = text;
+    return d;
+  }
+
+  /** Load (and cache) the dictionary for langName, or English if !on. */
+  async function load(langName, on) {
+    if (!on || langName === "English") {
+      dict = EN;
+      return;
+    }
+    if (BUILTIN[langName]) {
+      dict = Object.assign({}, EN, BUILTIN[langName]);
+      return;
+    }
+    let cached = null;
+    try {
+      cached = JSON.parse(localStorage.getItem(cacheKey(langName)));
+    } catch (e) {
+      /* ignore */
+    }
+    if (cached) {
+      dict = Object.assign({}, EN, cached);
+      return;
+    }
+    // need an AI translation
+    App.toast(t("toast.translatingUI"));
+    App.busy(t("toast.translatingUI"));
+    try {
+      const d = await fetchTranslation(langName);
+      localStorage.setItem(cacheKey(langName), JSON.stringify(d));
+      dict = Object.assign({}, EN, d);
+      App.toast(t("toast.uiReady"));
+    } catch (e) {
+      dict = EN;
+      App.toast("Could not translate the interface (" + e.message + ") — keeping English.");
+    } finally {
+      App.busy(false);
+    }
+  }
+
+  /** True if this language can be shown instantly (built-in or cached). */
+  function isInstant(langName) {
+    if (langName === "English" || BUILTIN[langName]) return true;
+    return !!localStorage.getItem(cacheKey(langName));
+  }
+
+  return { t, applyStatic, load, active, isInstant, EN };
+})();

@@ -97,6 +97,16 @@ an AI-written example sentence. The `.apkg` is built entirely in the browser
 (sql.js + JSZip from a CDN); if the CDN is unreachable a TSV import file is
 produced instead.
 
+### 🌐 Interface in the target language
+A checkbox in **⚙️ Settings** ("Show the interface in the language I'm
+learning") localizes the whole UI — tab titles, buttons, instructions, and
+feedback — into the language you're studying, for immersive practice. **French
+is built in** (instant, works offline). For any other language the interface is
+translated once by a single cached Claude call the first time you enable it,
+then stored locally so it loads instantly afterwards. The setting is saved per
+user + language, and English is always the fallback if a translation can't be
+fetched.
+
 ### 🧩 Grammar course
 Claude designs an ordered curriculum (~20 elements) of the language's grammar.
 For each element it writes a lesson — an explanation plus example sentences

@@ -39,24 +39,25 @@ const App = (() => {
 
   /* ---------------- dashboard ---------------- */
 
-  const SKILL_LABELS = {
-    grammar: "Grammar",
-    vocabulary: "Vocabulary",
-    listening: "Listening comprehension",
-    pronunciation: "Pronunciation",
-    reading: "Reading comprehension",
-  };
+  const SKILL_KEYS = ["grammar", "vocabulary", "listening", "pronunciation", "reading"];
 
   function renderDashboard() {
     const p = Store.profile;
     if (!p) return;
     const bars = document.getElementById("skill-bars");
     bars.innerHTML = "";
-    for (const [key, label] of Object.entries(SKILL_LABELS)) {
+    for (const key of SKILL_KEYS) {
       const val = Math.round(p.skills[key]);
       const row = document.createElement("div");
       row.className = "skill-row";
-      row.innerHTML = `<span>${label}</span><div class="skill-bar"><div style="width:${val}%"></div></div><b>${val}</b>`;
+      const label = document.createElement("span");
+      label.textContent = I18N.t("skill." + key);
+      const bar = document.createElement("div");
+      bar.className = "skill-bar";
+      bar.innerHTML = `<div style="width:${val}%"></div>`;
+      const num = document.createElement("b");
+      num.textContent = val;
+      row.append(label, bar, num);
       bars.appendChild(row);
     }
     document.getElementById("stat-mastered").textContent = Object.keys(p.vocab.mastered).length;
@@ -64,7 +65,7 @@ const App = (() => {
     document.getElementById("stat-listen-level").textContent = Math.round(p.listen.level);
     const done = Object.values(p.grammar.progress).filter((x) => x.done).length;
     document.getElementById("stat-grammar").textContent = `${done}/${p.grammar.curriculum.length || 0}`;
-    document.querySelectorAll(".lang-name").forEach((el) => (el.textContent = Store.app.language.name));
+    document.getElementById("dash-title").textContent = I18N.t("dash.title", { lang: Store.app.language.name });
     document.getElementById("who-chip").textContent = `${Store.app.user} · ${Store.app.language.name}`;
   }
 
@@ -77,11 +78,19 @@ const App = (() => {
     document.getElementById("set-model").value = s.model;
     document.getElementById("set-speech").value = s.speech;
     document.getElementById("set-voice").value = s.voice;
+    document.getElementById("set-ui-lang").checked = !!s.uiInLang;
     const backdrop = document.getElementById("modal-backdrop");
     backdrop.classList.remove("hidden");
     backdrop.dataset.cancellable = "1";
     document.getElementById("modal-settings").classList.remove("hidden");
     document.getElementById("modal-profile").classList.add("hidden");
+  }
+
+  /** (Re)load the interface language and re-render everything. */
+  async function applyUiLanguage() {
+    await I18N.load(Store.app.language?.name, Store.app.settings.uiInLang);
+    I18N.applyStatic();
+    refreshAll();
   }
 
   const VOICE_SAMPLES = {
@@ -128,14 +137,17 @@ const App = (() => {
 
   function saveSettings() {
     const s = Store.app.settings;
+    const uiWas = s.uiInLang;
     s.anthropicKey = document.getElementById("set-anthropic-key").value.trim();
     s.openaiKey = document.getElementById("set-openai-key").value.trim();
     s.model = document.getElementById("set-model").value;
     s.speech = document.getElementById("set-speech").value;
     s.voice = document.getElementById("set-voice").value;
+    s.uiInLang = document.getElementById("set-ui-lang").checked;
     Store.saveApp();
     closeModals();
-    toast("Settings saved.");
+    toast(I18N.t("toast.settingsSaved"));
+    if (s.uiInLang !== uiWas) applyUiLanguage(); // toggle changed — relocalize
   }
 
   /* ---------------- profile (user + language) modal ---------------- */
@@ -189,7 +201,7 @@ const App = (() => {
     }
     Store.setSession(user, language);
     closeModals();
-    refreshAll();
+    applyUiLanguage(); // language changed → relocalize the interface, then render
     if (!Store.app.settings.anthropicKey) {
       openSettings();
       toast("Paste your Anthropic API key to enable the AI tutor.");
@@ -231,7 +243,7 @@ const App = (() => {
 
     if (Store.app.user && Store.app.language) {
       Store.loadProfile();
-      refreshAll();
+      applyUiLanguage(); // localizes (if enabled) and renders
     } else {
       openProfile(false);
     }

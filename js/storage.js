@@ -49,6 +49,7 @@ const Store = (() => {
         model: "claude-opus-4-8",
         speech: "auto",
         voice: "alloy",
+        uiInLang: false,
       },
     },
     loadApp()

@@ -131,8 +131,8 @@ const Listen = (() => {
   function reveal(heard) {
     document.getElementById("lr-phrase").classList.remove("blurred");
     document.getElementById("lr-heard").textContent = heard
-      ? `🎙 You said: “${heard}”`
-      : "🎙 (heard nothing)";
+      ? I18N.t("listen.youSaid", { heard })
+      : I18N.t("listen.heardNothing");
   }
 
   function recordBtn() {
@@ -145,10 +145,10 @@ const Listen = (() => {
     btn.disabled = state === "transcribing";
     btn.textContent =
       state === "listening" || state === "hearing"
-        ? "🎙 Listening — speak now (click when done)"
+        ? I18N.t("listen.recording")
         : state === "transcribing"
-          ? "⏳ Transcribing…"
-          : "🎙 Record";
+          ? I18N.t("listen.transcribing")
+          : I18N.t("listen.record");
   }
 
   /** Start recording automatically; resolves after evaluation. */
@@ -184,7 +184,7 @@ const Listen = (() => {
     busy = true;
     sessionOn = true;
     endRequested = false;
-    App.busy("Composing a phrase…");
+    App.busy(I18N.t("listen.composing"));
     try {
       current = await nextPhrase();
       failCount = 0;
@@ -210,13 +210,13 @@ const Listen = (() => {
     endRequested = true;
     if (listener) {
       // a take is in progress — finish it now so it gets evaluated, then end
-      App.toast("Ending after this phrase…");
+      App.toast(I18N.t("listen.ending"));
       listener.stop();
     } else if (!busy) {
       // nothing in flight (no take, not composing) — end immediately
       finalizeEnd();
     } else {
-      App.toast("Ending after this phrase…");
+      App.toast(I18N.t("listen.ending"));
     }
   }
 
@@ -252,16 +252,16 @@ const Listen = (() => {
       }
       if (current.new_words?.length) {
         const n = Vocab.addNewWords(current.new_words);
-        if (n) App.toast(`Added ${n} new word${n > 1 ? "s" : ""} to your Learning list.`);
+        if (n) App.toast(I18N.t("listen.newWords", { n }));
       }
 
       if (sim >= excellentCut()) {
-        setFeedback(`✅ Excellent — ${pct}% match. Difficulty up!`, "good");
+        setFeedback(I18N.t("listen.excellent", { pct }), "good");
         Store.updateSkill("listening", Math.min(100, lvl * 10), 0.15);
         Store.updateSkill("pronunciation", Math.min(100, lvl * 10), 0.15);
         setLevel(lvl + 0.4);
       } else {
-        setFeedback(`👍 Good enough — ${pct}% match. New phrase at the same level.`, "good");
+        setFeedback(I18N.t("listen.good", { pct }), "good");
         Store.updateSkill("listening", Math.min(100, lvl * 10 - 5), 0.08);
         Store.updateSkill("pronunciation", Math.min(100, lvl * 10 - 5), 0.08);
       }
@@ -270,7 +270,7 @@ const Listen = (() => {
     } else if (failCount === 0 && !endRequested) {
       // first miss → same phrase again, slowly (text stays hidden)
       failCount = 1;
-      setFeedback(`🤔 ${pct}% — not quite. Listen again, slowly and carefully.`, "meh");
+      setFeedback(I18N.t("listen.notQuiteSlow", { pct }), "meh");
       Store.updateSkill("listening", Math.max(0, lvl * 10 - 15), 0.05);
       App.renderDashboard();
       await pause(700);
@@ -279,13 +279,13 @@ const Listen = (() => {
       return;
     } else if (failCount === 0) {
       // first miss but End was pressed — show feedback and stop, no level drop
-      setFeedback(`🤔 ${pct}% — not quite.`, "meh");
+      setFeedback(I18N.t("listen.notQuite", { pct }), "meh");
       Store.updateSkill("listening", Math.max(0, lvl * 10 - 15), 0.05);
       reveal(heard);
       await moveOn();
     } else {
       // second miss → drop to a simpler phrase
-      setFeedback("💪 No problem — let's try something a little simpler.", "bad");
+      setFeedback(I18N.t("listen.simpler"), "bad");
       setLevel(lvl - 1);
       Store.updateSkill("listening", Math.max(0, level() * 10 - 10), 0.1);
       Store.updateSkill("pronunciation", Math.max(0, level() * 10 - 10), 0.1);
@@ -298,7 +298,7 @@ const Listen = (() => {
   /** After a phrase's feedback is shown: pause briefly, then either compose
    *  the next phrase or — if End was pressed — stop here. */
   async function moveOn() {
-    document.getElementById("lr-streak").textContent = streak >= 2 ? `🔥 streak: ${streak}` : "";
+    document.getElementById("lr-streak").textContent = streak >= 2 ? I18N.t("listen.streak", { n: streak }) : "";
     App.renderDashboard();
     if (endRequested) {
       finalizeEnd();
