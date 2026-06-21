@@ -27,6 +27,7 @@ const Listen = (() => {
   let listener = null; // active Speech.listen() handle
   let sessionOn = false;
   let busy = false;
+  let endRequested = false; // End pressed: finish the current phrase, then stop
 
   function level() {
     return Store.profile.listen.level;
@@ -182,6 +183,7 @@ const Listen = (() => {
     if (busy) return;
     busy = true;
     sessionOn = true;
+    endRequested = false;
     App.busy("Composing a phrase…");
     try {
       current = await nextPhrase();
@@ -201,8 +203,27 @@ const Listen = (() => {
     }
   }
 
+  /** End button: finish the current phrase (let it be evaluated and shown),
+   *  then stop just before the next phrase would be composed. */
   function endSession() {
+    if (!sessionOn || endRequested) return;
+    endRequested = true;
+    if (listener) {
+      // a take is in progress — finish it now so it gets evaluated, then end
+      App.toast("Ending after this phrase…");
+      listener.stop();
+    } else if (!busy) {
+      // nothing in flight (no take, not composing) — end immediately
+      finalizeEnd();
+    } else {
+      App.toast("Ending after this phrase…");
+    }
+  }
+
+  /** Tear down the session UI. Keeps the last phrase's feedback on screen. */
+  function finalizeEnd() {
     sessionOn = false;
+    endRequested = false;
     cancelListening();
     Speech.stop();
     current = null;
@@ -211,9 +232,7 @@ const Listen = (() => {
     recordBtn().classList.add("hidden");
     document.getElementById("lr-skip").classList.add("hidden");
     document.getElementById("lr-end").classList.add("hidden");
-    document.getElementById("lr-phrase-box").classList.add("hidden");
     document.getElementById("lr-streak").textContent = "";
-    setFeedback("Session ended — nice work! 👋", "good");
   }
 
   async function evaluate(heard) {
@@ -246,45 +265,68 @@ const Listen = (() => {
         Store.updateSkill("listening", Math.min(100, lvl * 10 - 5), 0.08);
         Store.updateSkill("pronunciation", Math.min(100, lvl * 10 - 5), 0.08);
       }
-      reveal(heard); // brief look at the phrase + transcript before moving on
-      await pause(1500);
-      await advance();
-    } else if (failCount === 0) {
-      // same phrase again, slowly — the text stays hidden (listening practice)
+      reveal(heard);
+      await moveOn();
+    } else if (failCount === 0 && !endRequested) {
+      // first miss → same phrase again, slowly (text stays hidden)
       failCount = 1;
       setFeedback(`🤔 ${pct}% — not quite. Listen again, slowly and carefully.`, "meh");
       Store.updateSkill("listening", Math.max(0, lvl * 10 - 15), 0.05);
+      App.renderDashboard();
       await pause(700);
       await present(true);
       startListening();
+      return;
+    } else if (failCount === 0) {
+      // first miss but End was pressed — show feedback and stop, no level drop
+      setFeedback(`🤔 ${pct}% — not quite.`, "meh");
+      Store.updateSkill("listening", Math.max(0, lvl * 10 - 15), 0.05);
+      reveal(heard);
+      await moveOn();
     } else {
+      // second miss → drop to a simpler phrase
       setFeedback("💪 No problem — let's try something a little simpler.", "bad");
       setLevel(lvl - 1);
       Store.updateSkill("listening", Math.max(0, level() * 10 - 10), 0.1);
       Store.updateSkill("pronunciation", Math.max(0, level() * 10 - 10), 0.1);
       streak = 0;
-      reveal(heard); // brief look at the phrase + transcript before moving on
-      await pause(1500);
-      await advance();
+      reveal(heard);
+      await moveOn();
     }
+  }
+
+  /** After a phrase's feedback is shown: pause briefly, then either compose
+   *  the next phrase or — if End was pressed — stop here. */
+  async function moveOn() {
     document.getElementById("lr-streak").textContent = streak >= 2 ? `🔥 streak: ${streak}` : "";
     App.renderDashboard();
+    if (endRequested) {
+      finalizeEnd();
+      return;
+    }
+    await pause(1500);
+    if (endRequested) {
+      finalizeEnd();
+      return;
+    }
+    await advance();
   }
 
   async function advance() {
-    if (busy || !sessionOn) return;
+    if (busy || !sessionOn || endRequested) return;
     busy = true;
     cancelListening();
-    App.busy("Composing the next phrase…");
     try {
-      current = await nextPhrase();
+      current = await nextPhrase(); // composed silently — no spinner
       failCount = 0;
-      App.busy(false);
-      await present(false);
       busy = false;
+      if (!sessionOn || endRequested) {
+        finalizeEnd();
+        return;
+      }
+      await present(false);
       startListening();
     } catch (e) {
-      App.busy(false);
       App.toast(e.message);
       busy = false;
     }
