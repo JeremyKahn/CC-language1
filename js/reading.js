@@ -323,6 +323,7 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     practice = { sentences, idx: 0, tries: 0, sims: [], results: [], listener: null };
     practiceEl("panel").classList.remove("hidden");
     practiceEl("summary").classList.add("hidden");
+    document.getElementById("rd-text").classList.add("blurred"); // hide the text — listening practice
     document.getElementById("rd-practice-start").classList.add("hidden");
     document.getElementById("rd-practice-stop").classList.remove("hidden");
     practiceEl("status").textContent = I18N.t("reading.practiceIntro");
@@ -335,6 +336,7 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     if (practice.listener) practice.listener.cancel();
     Speech.stop();
     practice = null;
+    document.getElementById("rd-text").classList.remove("blurred");
     practiceEl("current").textContent = "";
     practiceEl("heard").textContent = "";
     setPracticeFeedback(null);
@@ -360,7 +362,9 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
   async function sayAndListen(slow) {
     if (!practice) return;
     const sentence = practice.sentences[practice.idx];
-    practiceEl("current").textContent = sentence;
+    const cur = practiceEl("current");
+    cur.textContent = sentence;
+    cur.classList.add("blurred"); // keep hidden until the attempt resolves
     try {
       await Speech.speak(sentence, { slow });
     } catch (e) {
@@ -410,6 +414,7 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
       : I18N.t("listen.heardNothing");
 
     if (sim >= passThreshold()) {
+      practiceEl("current").classList.remove("blurred"); // reveal before moving on
       setPracticeFeedback(I18N.t("reading.practiceGood", { pct }), "good");
       recordSentence(true);
       await pause(2000);
@@ -417,12 +422,13 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     } else if (practice.tries === 1) {
       setPracticeFeedback(I18N.t("reading.practiceTryAgain", { pct }), "meh");
       await pause(700);
-      await sayAndListen(false); // try 2: normal speed
+      await sayAndListen(false); // try 2: normal speed (text stays hidden)
     } else if (practice.tries === 2) {
       setPracticeFeedback(I18N.t("reading.practiceSlow", { pct }), "meh");
       await pause(700);
-      await sayAndListen(true); // try 3: slow
+      await sayAndListen(true); // try 3: slow (text stays hidden)
     } else {
+      practiceEl("current").classList.remove("blurred"); // reveal before moving on
       setPracticeFeedback(I18N.t("reading.practiceMoveOn", { pct }), "bad");
       recordSentence(false);
       await pause(2000);
@@ -481,6 +487,7 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     practiceEl("current").textContent = "";
     setPracticeFeedback(null);
     practiceEl("status").textContent = "";
+    document.getElementById("rd-text").classList.remove("blurred"); // restore the text
     document.getElementById("rd-practice-start").classList.remove("hidden");
     document.getElementById("rd-practice-stop").classList.add("hidden");
     practice = null;
