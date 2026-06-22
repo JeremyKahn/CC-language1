@@ -146,6 +146,10 @@ input[type="text"], input[type="password"], textarea, select {
 /* reading */
 .reading-text { font-size: 1.1rem; line-height: 1.8; white-space: pre-wrap; margin-top: 1rem; }
 .reading-text.blurred { filter: blur(6px); user-select: none; }
+/* per-sentence masking for the listening drill (transparent + shadow blurs
+   cleanly across line wraps, unlike filter:blur on inline spans) */
+.reading-text .sentence.masked { color: transparent; text-shadow: 0 0 9px rgba(40, 30, 20, 0.6); user-select: none; }
+.reading-text .sentence.current { background: var(--accent-soft); border-radius: 4px; box-shadow: 0 0 0 3px var(--accent-soft); }
 .w-click { cursor: pointer; border-radius: 3px; }
 .w-click:hover { background: var(--accent-soft); }
 .w-click.in-gloss { background: #fdf3d8; box-shadow: 0 1px 0 #d8b44a; }

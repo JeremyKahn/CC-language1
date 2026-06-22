@@ -181,9 +181,8 @@ const Reading = (() => {
     return text.split(/(\s+)/).map((t) => ({ text: t, isWord: /\S/.test(t) }));
   }
 
-  function renderText(text) {
-    const el = document.getElementById("rd-text");
-    el.innerHTML = "";
+  /** Append `text` to `parent` as clickable word spans + plain whitespace. */
+  function appendWords(parent, text) {
     for (const s of segments(text)) {
       if (s.isWord) {
         const span = document.createElement("span");
@@ -191,11 +190,17 @@ const Reading = (() => {
         span.textContent = s.text;
         span.title = "Click to add to glossary";
         span.onclick = () => addGlossaryWord(s.text);
-        el.appendChild(span);
+        parent.appendChild(span);
       } else {
-        el.appendChild(document.createTextNode(s.text));
+        parent.appendChild(document.createTextNode(s.text));
       }
     }
+  }
+
+  function renderText(text) {
+    const el = document.getElementById("rd-text");
+    el.innerHTML = "";
+    appendWords(el, text);
     markGlossaryWords();
   }
 
@@ -297,9 +302,34 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     return (Store.profile.listen.passCut ?? 75) / 100;
   }
 
-  function splitSentences(text) {
-    const parts = text.match(/[^.!?。！？؟\n]+[.!?。！？؟]*/g) || [];
-    return parts.map((s) => s.trim()).filter((s) => s.length > 1);
+  /** Re-render #rd-text splitting it into sentence spans (each containing the
+   *  clickable word spans). Each sentence span starts masked (blurred) so the
+   *  text can be revealed one sentence at a time. Returns [{text, span}]. */
+  function buildPracticeText(text) {
+    const el = document.getElementById("rd-text");
+    el.innerHTML = "";
+    const re = /[^.!?。！？؟\n]+[.!?。！？؟]*/g;
+    const items = [];
+    let last = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const raw = m[0];
+      const trimmed = raw.trim();
+      if (trimmed.length > 1 && /[\p{L}\p{N}]/u.test(trimmed)) {
+        const span = document.createElement("span");
+        span.className = "sentence masked";
+        appendWords(span, raw);
+        el.appendChild(span);
+        items.push({ text: trimmed, span });
+      } else {
+        el.appendChild(document.createTextNode(raw)); // punctuation/whitespace only
+      }
+      last = m.index + raw.length;
+    }
+    if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+    markGlossaryWords();
+    return items;
   }
 
   function practiceEl(id) {
@@ -318,12 +348,19 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
 
   async function startPractice() {
     if (!lastResult) return;
-    const sentences = splitSentences(lastResult.text);
-    if (!sentences.length) return App.toast("No sentences to practise.");
-    practice = { sentences, idx: 0, tries: 0, sims: [], results: [], listener: null };
+    const items = buildPracticeText(lastResult.text);
+    if (!items.length) return App.toast("No sentences to practise.");
+    practice = {
+      sentences: items.map((i) => i.text),
+      spans: items.map((i) => i.span),
+      idx: 0,
+      tries: 0,
+      sims: [],
+      results: [],
+      listener: null,
+    };
     practiceEl("panel").classList.remove("hidden");
     practiceEl("summary").classList.add("hidden");
-    document.getElementById("rd-text").classList.add("blurred"); // hide the text — listening practice
     document.getElementById("rd-practice-start").classList.add("hidden");
     document.getElementById("rd-practice-stop").classList.remove("hidden");
     practiceEl("status").textContent = I18N.t("reading.practiceIntro");
@@ -336,8 +373,7 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     if (practice.listener) practice.listener.cancel();
     Speech.stop();
     practice = null;
-    document.getElementById("rd-text").classList.remove("blurred");
-    practiceEl("current").textContent = "";
+    if (lastResult) renderText(lastResult.text); // restore the unmasked, clickable text
     practiceEl("heard").textContent = "";
     setPracticeFeedback(null);
     practiceEl("status").textContent = "";
@@ -356,15 +392,15 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     });
     setPracticeFeedback(null);
     practiceEl("heard").textContent = "";
+    // mark which sentence is active and scroll it into view (still masked)
+    practice.spans.forEach((s, i) => s.classList.toggle("current", i === practice.idx));
+    practice.spans[practice.idx].scrollIntoView({ behavior: "smooth", block: "center" });
     await sayAndListen(false);
   }
 
   async function sayAndListen(slow) {
     if (!practice) return;
     const sentence = practice.sentences[practice.idx];
-    const cur = practiceEl("current");
-    cur.textContent = sentence;
-    cur.classList.add("blurred"); // keep hidden until the attempt resolves
     try {
       await Speech.speak(sentence, { slow });
     } catch (e) {
@@ -414,7 +450,7 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
       : I18N.t("listen.heardNothing");
 
     if (sim >= passThreshold()) {
-      practiceEl("current").classList.remove("blurred"); // reveal before moving on
+      revealCurrent(); // unblur this sentence in the text before moving on
       setPracticeFeedback(I18N.t("reading.practiceGood", { pct }), "good");
       recordSentence(true);
       await pause(2000);
@@ -428,12 +464,17 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
       await pause(700);
       await sayAndListen(true); // try 3: slow (text stays hidden)
     } else {
-      practiceEl("current").classList.remove("blurred"); // reveal before moving on
+      revealCurrent(); // unblur this sentence in the text before moving on
       setPracticeFeedback(I18N.t("reading.practiceMoveOn", { pct }), "bad");
       recordSentence(false);
       await pause(2000);
       nextSentence();
     }
+  }
+
+  function revealCurrent() {
+    const span = practice.spans[practice.idx];
+    span.classList.remove("masked", "current");
   }
 
   function recordSentence(passed) {
@@ -484,10 +525,9 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
       d.innerHTML = line;
       box.appendChild(d);
     }
-    practiceEl("current").textContent = "";
     setPracticeFeedback(null);
     practiceEl("status").textContent = "";
-    document.getElementById("rd-text").classList.remove("blurred"); // restore the text
+    renderText(lastResult.text); // restore the unmasked, clickable text
     document.getElementById("rd-practice-start").classList.remove("hidden");
     document.getElementById("rd-practice-stop").classList.add("hidden");
     practice = null;
