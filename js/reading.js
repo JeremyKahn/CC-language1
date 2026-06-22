@@ -475,6 +475,9 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
   function revealCurrent() {
     const span = practice.spans[practice.idx];
     span.classList.remove("masked", "current");
+    span.classList.add("revealed"); // brief flash so the in-place reveal is obvious
+    span.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => span.classList.remove("revealed"), 1500);
   }
 
   function recordSentence(passed) {
