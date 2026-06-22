@@ -76,6 +76,9 @@ const Reading = (() => {
   }
 
   function render(out) {
+    stopPractice(); // a new text invalidates any in-progress practice
+    document.getElementById("rd-practice-panel").classList.add("hidden");
+    document.getElementById("rd-practice-summary").classList.add("hidden");
     document.getElementById("rd-output").classList.remove("hidden");
     document.getElementById("rd-pdf").classList.remove("hidden");
     document.getElementById("rd-listen").classList.remove("hidden");
@@ -282,6 +285,211 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     App.toast("Noted — your reading score has been updated.");
   }
 
+  /* ---------------- sentence-by-sentence repeat practice ---------------- */
+  /* The program reads each sentence; the learner repeats it (up to three tries
+   * per sentence, the 3rd spoken slowly). No difficulty change — just work
+   * through the text — then an overall summary. */
+
+  let practice = null; // {sentences, idx, tries, sims, results, listener}
+
+  function passThreshold() {
+    // reuse the learner's Listen & Repeat "pass" cutoff for consistency
+    return (Store.profile.listen.passCut ?? 75) / 100;
+  }
+
+  function splitSentences(text) {
+    const parts = text.match(/[^.!?。！？؟\n]+[.!?。！？؟]*/g) || [];
+    return parts.map((s) => s.trim()).filter((s) => s.length > 1);
+  }
+
+  function practiceEl(id) {
+    return document.getElementById("rd-practice-" + id);
+  }
+
+  function setPracticeFeedback(msg, cls) {
+    const el = practiceEl("feedback");
+    if (!msg) {
+      el.classList.add("hidden");
+      return;
+    }
+    el.textContent = msg;
+    el.className = "feedback " + (cls || "");
+  }
+
+  async function startPractice() {
+    if (!lastResult) return;
+    const sentences = splitSentences(lastResult.text);
+    if (!sentences.length) return App.toast("No sentences to practise.");
+    practice = { sentences, idx: 0, tries: 0, sims: [], results: [], listener: null };
+    practiceEl("panel").classList.remove("hidden");
+    practiceEl("summary").classList.add("hidden");
+    document.getElementById("rd-practice-start").classList.add("hidden");
+    document.getElementById("rd-practice-stop").classList.remove("hidden");
+    practiceEl("status").textContent = I18N.t("reading.practiceIntro");
+    await pause(600);
+    runSentence();
+  }
+
+  function stopPractice() {
+    if (!practice) return;
+    if (practice.listener) practice.listener.cancel();
+    Speech.stop();
+    practice = null;
+    practiceEl("current").textContent = "";
+    practiceEl("heard").textContent = "";
+    setPracticeFeedback(null);
+    practiceEl("status").textContent = "";
+    document.getElementById("rd-practice-start").classList.remove("hidden");
+    document.getElementById("rd-practice-stop").classList.add("hidden");
+  }
+
+  async function runSentence() {
+    if (!practice) return;
+    if (practice.idx >= practice.sentences.length) return finishPractice();
+    practice.tries = 0;
+    practice.sims = [];
+    practiceEl("status").textContent = I18N.t("reading.practiceSentence", {
+      i: practice.idx + 1,
+      n: practice.sentences.length,
+    });
+    setPracticeFeedback(null);
+    practiceEl("heard").textContent = "";
+    await sayAndListen(false);
+  }
+
+  async function sayAndListen(slow) {
+    if (!practice) return;
+    const sentence = practice.sentences[practice.idx];
+    practiceEl("current").textContent = sentence;
+    try {
+      await Speech.speak(sentence, { slow });
+    } catch (e) {
+      App.toast(e.message);
+    }
+    if (!practice) return; // stopped during playback
+    let stopFn;
+    try {
+      practice.listener = await Speech.listen({ onStatus: practiceRecStatus });
+      stopFn = practice.listener;
+    } catch (e) {
+      App.toast(e.message);
+      return;
+    }
+    let heard;
+    try {
+      heard = await stopFn.result;
+    } catch (e) {
+      heard = "";
+    }
+    if (!practice) return; // stopped while recording
+    practice.listener = null;
+    if (heard === null) return; // cancelled
+    await evalSentence(heard || "");
+  }
+
+  function practiceRecStatus(state) {
+    if (!practice) return;
+    if (state === "listening" || state === "hearing") {
+      practiceEl("status").textContent =
+        I18N.t("reading.practiceSentence", { i: practice.idx + 1, n: practice.sentences.length }) +
+        " — " +
+        I18N.t("listen.recording");
+    } else if (state === "transcribing") {
+      practiceEl("status").textContent = I18N.t("listen.transcribing");
+    }
+  }
+
+  async function evalSentence(heard) {
+    const sentence = practice.sentences[practice.idx];
+    const sim = Speech.similarity(sentence, heard);
+    const pct = Math.round(sim * 100);
+    practice.tries++;
+    practice.sims.push(sim);
+    practiceEl("heard").textContent = heard
+      ? I18N.t("listen.youSaid", { heard })
+      : I18N.t("listen.heardNothing");
+
+    if (sim >= passThreshold()) {
+      setPracticeFeedback(I18N.t("reading.practiceGood", { pct }), "good");
+      recordSentence(true);
+      await pause(2000);
+      nextSentence();
+    } else if (practice.tries === 1) {
+      setPracticeFeedback(I18N.t("reading.practiceTryAgain", { pct }), "meh");
+      await pause(700);
+      await sayAndListen(false); // try 2: normal speed
+    } else if (practice.tries === 2) {
+      setPracticeFeedback(I18N.t("reading.practiceSlow", { pct }), "meh");
+      await pause(700);
+      await sayAndListen(true); // try 3: slow
+    } else {
+      setPracticeFeedback(I18N.t("reading.practiceMoveOn", { pct }), "bad");
+      recordSentence(false);
+      await pause(2000);
+      nextSentence();
+    }
+  }
+
+  function recordSentence(passed) {
+    practice.results.push({ sims: practice.sims.slice(), passed });
+    // credit pronunciation/listening a little for satisfactory repeats
+    if (passed) Store.updateSkill("pronunciation", 80, 0.05);
+  }
+
+  function nextSentence() {
+    if (!practice) return;
+    practice.idx++;
+    runSentence();
+  }
+
+  function finishPractice() {
+    const res = practice.results;
+    const total = res.length;
+    const passed = res.filter((r) => r.passed).length;
+
+    // average match for each attempt number (1..3), over sentences that reached it
+    const tryLines = [];
+    for (let k = 0; k < 3; k++) {
+      const sims = res.filter((r) => r.sims.length > k).map((r) => r.sims[k]);
+      if (sims.length) {
+        const avg = Math.round((sims.reduce((a, b) => a + b, 0) / sims.length) * 100);
+        tryLines.push(I18N.t("reading.sumTry", { k: k + 1, pct: avg, count: sims.length }));
+      }
+    }
+    // overall: best attempt per sentence
+    const bests = res.map((r) => Math.max(...r.sims));
+    const overall = total ? Math.round((bests.reduce((a, b) => a + b, 0) / total) * 100) : 0;
+    const satPct = total ? Math.round((passed / total) * 100) : 0;
+
+    Store.updateSkill("reading", Math.min(100, overall), 0.1);
+    App.renderDashboard();
+
+    const box = practiceEl("summary");
+    box.classList.remove("hidden");
+    box.innerHTML = "";
+    const lines = [
+      `<b>${I18N.t("reading.practiceDone")}</b>`,
+      I18N.t("reading.sumSatisfactory", { pct: satPct, pass: passed, total }),
+      I18N.t("reading.sumOverall", { pct: overall }),
+      ...tryLines,
+    ];
+    for (const line of lines) {
+      const d = document.createElement("div");
+      d.innerHTML = line;
+      box.appendChild(d);
+    }
+    practiceEl("current").textContent = "";
+    setPracticeFeedback(null);
+    practiceEl("status").textContent = "";
+    document.getElementById("rd-practice-start").classList.remove("hidden");
+    document.getElementById("rd-practice-stop").classList.add("hidden");
+    practice = null;
+  }
+
+  function pause(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
   /* ---------------- wiring ---------------- */
 
   function init() {
@@ -311,7 +519,9 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     document.querySelectorAll("#rd-rating button").forEach((b) => {
       b.onclick = () => rate(+b.dataset.r);
     });
+    document.getElementById("rd-practice-start").onclick = startPractice;
+    document.getElementById("rd-practice-stop").onclick = stopPractice;
   }
 
-  return { init };
+  return { init, stopPractice };
 })();

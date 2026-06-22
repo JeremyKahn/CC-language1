@@ -5,8 +5,8 @@
  * similarity on normalized text) uses two tiers:
  *   - >= ADVANCE (75%): good enough — move on to the next phrase, same level;
  *   - >= LEVELUP (92%): excellent — move on AND raise the difficulty.
- * First failure → the same phrase replayed slowly and carefully.
- * Second failure → an easier phrase.
+ * Up to three tries per phrase: try 2 repeats it at normal speed, try 3 repeats
+ * it slowly. After a third miss the next phrase is one level simpler.
  */
 "use strict";
 
@@ -267,9 +267,25 @@ const Listen = (() => {
       }
       reveal(heard);
       await moveOn();
-    } else if (failCount === 0 && !endRequested) {
-      // first miss → same phrase again, slowly (text stays hidden)
+    } else if (endRequested) {
+      // End was pressed mid-phrase — show feedback and stop, no level change
+      setFeedback(I18N.t("listen.notQuite", { pct }), "meh");
+      Store.updateSkill("listening", Math.max(0, lvl * 10 - 15), 0.05);
+      reveal(heard);
+      await moveOn();
+    } else if (failCount === 0) {
+      // first miss → try 2, same phrase at normal speed
       failCount = 1;
+      setFeedback(I18N.t("listen.notQuiteAgain", { pct }), "meh");
+      Store.updateSkill("listening", Math.max(0, lvl * 10 - 15), 0.05);
+      App.renderDashboard();
+      await pause(700);
+      await present(false);
+      startListening();
+      return;
+    } else if (failCount === 1) {
+      // second miss → try 3, same phrase spoken slowly
+      failCount = 2;
       setFeedback(I18N.t("listen.notQuiteSlow", { pct }), "meh");
       Store.updateSkill("listening", Math.max(0, lvl * 10 - 15), 0.05);
       App.renderDashboard();
@@ -277,14 +293,8 @@ const Listen = (() => {
       await present(true);
       startListening();
       return;
-    } else if (failCount === 0) {
-      // first miss but End was pressed — show feedback and stop, no level drop
-      setFeedback(I18N.t("listen.notQuite", { pct }), "meh");
-      Store.updateSkill("listening", Math.max(0, lvl * 10 - 15), 0.05);
-      reveal(heard);
-      await moveOn();
     } else {
-      // second miss → drop to a simpler phrase
+      // third miss → drop to a simpler phrase
       setFeedback(I18N.t("listen.simpler"), "bad");
       setLevel(lvl - 1);
       Store.updateSkill("listening", Math.max(0, level() * 10 - 10), 0.1);
@@ -304,7 +314,7 @@ const Listen = (() => {
       finalizeEnd();
       return;
     }
-    await pause(1500);
+    await pause(2000); // brief look at the phrase + transcript before the next one
     if (endRequested) {
       finalizeEnd();
       return;

@@ -62,9 +62,9 @@ scripts too), with two tiers:
   native-level sentences).
 - **≥ 75 % — good enough**: next phrase at the **same** level, so you stay at
   an appropriate difficulty until your repeats are consistently near-perfect.
-- Below 75 % → the same phrase is repeated **slowly and carefully** (with the
-  text and your transcript revealed so you can compare); miss again and you
-  get a **simpler** phrase.
+- Below 75 % you get **up to three tries** on the same phrase: try 2 repeats it
+  at normal speed, try 3 repeats it slowly. A third miss drops you to a
+  **simpler** phrase.
 
 Both cutoffs are adjustable with sliders on the page (pass: 70–90 %,
 excellent: 90–100 %), saved per user + language. After each take the original
@@ -145,7 +145,13 @@ Microphone → Chrome) — that one is the OS, not the page.
 
 Settings has a **🔊 Test** button that speaks a sample and reports exactly
 which engine produced it. In Reading, the line under "Read aloud" does the
-same. If you expected OpenAI and see "browser speech synthesis", the message
+In Reading, **Repeat sentence by sentence** turns the generated text into a
+guided speaking drill: the tutor reads each sentence and you repeat it (the same
+three-try rule — normal, normal, slow — with no difficulty change), and at the
+end you get a summary with the percentage of sentences repeated satisfactorily,
+the overall best-attempt match, and the average match on each attempt number.
+
+If you expected OpenAI and see "browser speech synthesis", the message
 includes the OpenAI error (bad key, no credit, rate limit…). OpenAI voices
 (alloy, ash, coral, fable, nova, onyx, sage, shimmer) only differ when the
 OpenAI engine is actually in use — the browser engine has its own OS voices.

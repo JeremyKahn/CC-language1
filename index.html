@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <title>LinguaForge — AI Language Learning</title>
-<link rel="stylesheet" href="css/style.css?v=8">
+<link rel="stylesheet" href="css/style.css?v=9">
 </head>
 <body>
 
@@ -144,6 +144,19 @@
         <table id="rd-glossary" class="gloss-table"></table>
       </div>
       <div id="rd-text" class="reading-text"></div>
+
+      <div class="row gap" style="margin-top:1rem">
+        <button id="rd-practice-start" class="btn" data-i18n="reading.practice">🎙 Repeat sentence by sentence</button>
+        <button id="rd-practice-stop" class="btn ghost hidden" data-i18n="reading.practiceStop">⏹ Stop practice</button>
+      </div>
+      <div id="rd-practice-panel" class="hidden">
+        <div id="rd-practice-status" class="muted small"></div>
+        <div id="rd-practice-current" class="phrase" style="font-size:1.3rem"></div>
+        <div id="rd-practice-heard" class="heard"></div>
+        <div id="rd-practice-feedback" class="feedback hidden"></div>
+        <div id="rd-practice-summary" class="card hidden"></div>
+      </div>
+
       <div class="row gap rating-row">
         <span data-i18n="reading.understand">How well did you understand it?</span>
         <span id="rd-rating">
@@ -295,15 +308,15 @@
 <div id="toast"></div>
 <div id="busy" class="hidden"><div class="spinner"></div><div id="busy-msg">Thinking…</div></div>
 
-<script src="js/storage.js?v=8"></script>
-<script src="js/ai.js?v=8"></script>
-<script src="js/i18n.js?v=8"></script>
-<script src="js/speech.js?v=8"></script>
-<script src="js/anki.js?v=8"></script>
-<script src="js/vocab.js?v=8"></script>
-<script src="js/listen.js?v=8"></script>
-<script src="js/reading.js?v=8"></script>
-<script src="js/grammar.js?v=8"></script>
-<script src="js/app.js?v=8"></script>
+<script src="js/storage.js?v=9"></script>
+<script src="js/ai.js?v=9"></script>
+<script src="js/i18n.js?v=9"></script>
+<script src="js/speech.js?v=9"></script>
+<script src="js/anki.js?v=9"></script>
+<script src="js/vocab.js?v=9"></script>
+<script src="js/listen.js?v=9"></script>
+<script src="js/reading.js?v=9"></script>
+<script src="js/grammar.js?v=9"></script>
+<script src="js/app.js?v=9"></script>
 </body>
 </html>

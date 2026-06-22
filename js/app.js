@@ -27,6 +27,7 @@ const App = (() => {
 
   function showView(name) {
     Listen.stopAll(); // cancel any active recording/audio when navigating
+    Reading.stopPractice();
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
     document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
     document.getElementById("view-" + name).classList.add("active");
