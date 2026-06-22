@@ -146,10 +146,16 @@ Microphone → Chrome) — that one is the OS, not the page.
 Settings has a **🔊 Test** button that speaks a sample and reports exactly
 which engine produced it. In Reading, the line under "Read aloud" does the
 In Reading, **Repeat sentence by sentence** turns the generated text into a
-guided speaking drill: the tutor reads each sentence and you repeat it (the same
-three-try rule — normal, normal, slow — with no difficulty change), and at the
-end you get a summary with the percentage of sentences repeated satisfactorily,
-the overall best-attempt match, and the average match on each attempt number.
+guided listening drill. The text blurs out; the tutor reads each sentence and
+you repeat it. If you repeat a sentence well, it un-blurs in place and the drill
+moves on. If you miss it, an AI **breaks the sentence into shorter phrases** (at
+commas and clause boundaries) and you repeat them one at a time — each phrase is
+read again **slowly** if you miss it, then revealed before moving on. The
+in-text feedback is minimal and non-distracting: when each sentence or phrase is
+revealed, the **words you missed are shown in bold** (the whole unit is bold if
+the repeat was nowhere near). A short end summary reports the percentage of
+sentences repeated satisfactorily on the first try and the average full-sentence
+match.
 
 If you expected OpenAI and see "browser speech synthesis", the message
 includes the OpenAI error (bad key, no credit, rate limit…). OpenAI voices

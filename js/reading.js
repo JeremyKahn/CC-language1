@@ -295,16 +295,17 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
    * per sentence, the 3rd spoken slowly). No difficulty change — just work
    * through the text — then an overall summary. */
 
-  let practice = null; // {sentences, idx, tries, sims, results, listener}
+  let practice = null;
 
   function passThreshold() {
     // reuse the learner's Listen & Repeat "pass" cutoff for consistency
     return (Store.profile.listen.passCut ?? 75) / 100;
   }
+  const NEAR = 0.4; // below this, a repeat is "nowhere near" — bold the whole unit
 
   /** Re-render #rd-text splitting it into sentence spans (each containing the
-   *  clickable word spans). Each sentence span starts masked (blurred) so the
-   *  text can be revealed one sentence at a time. Returns [{text, span}]. */
+   *  clickable word spans). Each sentence span starts masked so the text can be
+   *  revealed one sentence (or phrase) at a time. Returns [{text, span}]. */
   function buildPracticeText(text) {
     const el = document.getElementById("rd-text");
     el.innerHTML = "";
@@ -336,15 +337,96 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     return document.getElementById("rd-practice-" + id);
   }
 
-  function setPracticeFeedback(msg, cls) {
-    const el = practiceEl("feedback");
-    if (!msg) {
-      el.classList.add("hidden");
-      return;
-    }
-    el.textContent = msg;
-    el.className = "feedback " + (cls || "");
+  function setStatus(msg) {
+    practiceEl("status").textContent = msg || "";
   }
+
+  /* --- word-level "missed" marking (the in-text feedback) --- */
+
+  function heardSet(heard) {
+    const set = new Set();
+    for (const s of segments(heard)) {
+      if (s.isWord) {
+        const n = Speech.normalize(s.text);
+        if (n) set.add(n);
+      }
+    }
+    for (const w of Speech.normalize(heard).split(" ")) if (w) set.add(w);
+    return set;
+  }
+
+  /** Reveal a unit (sentence or phrase) and bold the words the learner missed
+   *  on their last repeat. If the repeat was nowhere near, bold the whole unit. */
+  function revealUnit(span, expected, heard) {
+    span.classList.remove("masked", "current");
+    span.classList.add("revealed");
+    const wordSpans = span.querySelectorAll(".w-click");
+    const sim = Speech.similarity(expected, heard);
+    if (!heard || sim < NEAR) {
+      wordSpans.forEach((ws) => ws.classList.add("missed"));
+    } else {
+      const set = heardSet(heard);
+      wordSpans.forEach((ws) => {
+        const n = Speech.normalize(ws.textContent);
+        if (n && !set.has(n)) ws.classList.add("missed");
+      });
+    }
+    span.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => span.classList.remove("revealed"), 1500);
+  }
+
+  /* --- breaking a sentence into phrases (AI, with a local fallback) --- */
+
+  function localSplit(sentence) {
+    const parts = sentence
+      .split(/(?<=[,;:、，；：…—–-])\s+/u)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return parts.length > 1 ? parts : [sentence];
+  }
+
+  async function breakIntoPhrases(sentence) {
+    const lang = Store.app.language.name;
+    try {
+      const out = await AI.call({
+        system: `You split ${lang} sentences into short, natural phrases for a learner to repeat back.`,
+        user:
+          `Split this ${lang} sentence into a few short phrases (typically at commas, conjunctions, or clause ` +
+          `boundaries). Keep the original words and order exactly — do not paraphrase, add, or drop words. ` +
+          `Each phrase should be easy to say in one breath.\n\nSentence: ${sentence}`,
+        schema: {
+          type: "object",
+          properties: { phrases: { type: "array", items: { type: "string" } } },
+          required: ["phrases"],
+          additionalProperties: false,
+        },
+        maxTokens: 1024,
+      });
+      const phrases = (out.phrases || []).map((s) => s.trim()).filter(Boolean);
+      return phrases.length > 1 ? phrases : localSplit(sentence);
+    } catch (e) {
+      return localSplit(sentence);
+    }
+  }
+
+  /** Replace a sentence span's content with masked phrase sub-spans. */
+  function renderPhrases(sentenceSpan, phrases) {
+    sentenceSpan.classList.remove("masked", "current");
+    sentenceSpan.innerHTML = "";
+    const spans = [];
+    phrases.forEach((ph, i) => {
+      if (i > 0) sentenceSpan.appendChild(document.createTextNode(" "));
+      const ps = document.createElement("span");
+      ps.className = "phrase-seg masked";
+      appendWords(ps, ph);
+      sentenceSpan.appendChild(ps);
+      spans.push(ps);
+    });
+    markGlossaryWords();
+    return spans;
+  }
+
+  /* ---------------- session control ---------------- */
 
   async function startPractice() {
     if (!lastResult) return;
@@ -354,16 +436,14 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
       sentences: items.map((i) => i.text),
       spans: items.map((i) => i.span),
       idx: 0,
-      tries: 0,
-      sims: [],
-      results: [],
+      results: [], // per sentence: {whole_sim, passedWhole}
       listener: null,
     };
     practiceEl("panel").classList.remove("hidden");
     practiceEl("summary").classList.add("hidden");
     document.getElementById("rd-practice-start").classList.add("hidden");
     document.getElementById("rd-practice-stop").classList.remove("hidden");
-    practiceEl("status").textContent = I18N.t("reading.practiceIntro");
+    setStatus(I18N.t("reading.practiceIntro"));
     await pause(600);
     runSentence();
   }
@@ -373,117 +453,105 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     if (practice.listener) practice.listener.cancel();
     Speech.stop();
     practice = null;
-    if (lastResult) renderText(lastResult.text); // restore the unmasked, clickable text
-    practiceEl("heard").textContent = "";
-    setPracticeFeedback(null);
-    practiceEl("status").textContent = "";
+    if (lastResult) renderText(lastResult.text); // restore plain, clickable text
+    setStatus("");
     document.getElementById("rd-practice-start").classList.remove("hidden");
     document.getElementById("rd-practice-stop").classList.add("hidden");
   }
 
-  async function runSentence() {
-    if (!practice) return;
-    if (practice.idx >= practice.sentences.length) return finishPractice();
-    practice.tries = 0;
-    practice.sims = [];
-    practiceEl("status").textContent = I18N.t("reading.practiceSentence", {
-      i: practice.idx + 1,
-      n: practice.sentences.length,
-    });
-    setPracticeFeedback(null);
-    practiceEl("heard").textContent = "";
-    // mark which sentence is active and scroll it into view (still masked)
-    practice.spans.forEach((s, i) => s.classList.toggle("current", i === practice.idx));
-    practice.spans[practice.idx].scrollIntoView({ behavior: "smooth", block: "center" });
-    await sayAndListen(false);
-  }
-
-  async function sayAndListen(slow) {
-    if (!practice) return;
-    const sentence = practice.sentences[practice.idx];
+  /** Speak `text`, auto-record, and return the transcript (or null if cancelled). */
+  async function sayAndHear(text, slow, counter) {
+    if (!practice) return null;
     try {
-      await Speech.speak(sentence, { slow });
+      await Speech.speak(text, { slow });
     } catch (e) {
       App.toast(e.message);
     }
-    if (!practice) return; // stopped during playback
-    let stopFn;
+    if (!practice) return null;
+    let listener;
     try {
-      practice.listener = await Speech.listen({ onStatus: practiceRecStatus });
-      stopFn = practice.listener;
+      listener = await Speech.listen({
+        onStatus: (state) => {
+          if (!practice) return;
+          if (state === "listening" || state === "hearing") setStatus(counter + " — " + I18N.t("listen.recording"));
+          else if (state === "transcribing") setStatus(I18N.t("listen.transcribing"));
+        },
+      });
+      practice.listener = listener;
     } catch (e) {
       App.toast(e.message);
-      return;
+      return null;
     }
     let heard;
     try {
-      heard = await stopFn.result;
+      heard = await listener.result;
     } catch (e) {
       heard = "";
     }
-    if (!practice) return; // stopped while recording
+    if (!practice) return null;
     practice.listener = null;
-    if (heard === null) return; // cancelled
-    await evalSentence(heard || "");
+    return heard; // may be null if cancelled
   }
 
-  function practiceRecStatus(state) {
+  /* ---------------- per-sentence flow ---------------- */
+
+  async function runSentence() {
     if (!practice) return;
-    if (state === "listening" || state === "hearing") {
-      practiceEl("status").textContent =
-        I18N.t("reading.practiceSentence", { i: practice.idx + 1, n: practice.sentences.length }) +
-        " — " +
-        I18N.t("listen.recording");
-    } else if (state === "transcribing") {
-      practiceEl("status").textContent = I18N.t("listen.transcribing");
-    }
-  }
+    if (practice.idx >= practice.sentences.length) return finishPractice();
+    const i = practice.idx;
+    const span = practice.spans[i];
+    const sentence = practice.sentences[i];
+    practice.spans.forEach((s, k) => s.classList.toggle("current", k === i));
+    span.scrollIntoView({ behavior: "smooth", block: "center" });
 
-  async function evalSentence(heard) {
-    const sentence = practice.sentences[practice.idx];
-    const sim = Speech.similarity(sentence, heard);
-    const pct = Math.round(sim * 100);
-    practice.tries++;
-    practice.sims.push(sim);
-    practiceEl("heard").textContent = heard
-      ? I18N.t("listen.youSaid", { heard })
-      : I18N.t("listen.heardNothing");
+    const counter = I18N.t("reading.practiceSentence", { i: i + 1, n: practice.sentences.length });
+    setStatus(counter);
+
+    // 1) whole sentence, once
+    const heard = await sayAndHear(sentence, false, counter);
+    if (heard === null) return; // cancelled
+    const sim = Speech.similarity(sentence, heard || "");
+    practice.results.push({ whole_sim: sim, passedWhole: sim >= passThreshold() });
 
     if (sim >= passThreshold()) {
-      revealCurrent(); // unblur this sentence in the text before moving on
-      setPracticeFeedback(I18N.t("reading.practiceGood", { pct }), "good");
-      recordSentence(true);
+      revealUnit(span, sentence, heard || "");
+      if (sim >= passThreshold()) Store.updateSkill("pronunciation", 80, 0.05);
       await pause(2000);
-      nextSentence();
-    } else if (practice.tries === 1) {
-      setPracticeFeedback(I18N.t("reading.practiceTryAgain", { pct }), "meh");
-      await pause(700);
-      await sayAndListen(false); // try 2: normal speed (text stays hidden)
-    } else if (practice.tries === 2) {
-      setPracticeFeedback(I18N.t("reading.practiceSlow", { pct }), "meh");
-      await pause(700);
-      await sayAndListen(true); // try 3: slow (text stays hidden)
-    } else {
-      revealCurrent(); // unblur this sentence in the text before moving on
-      setPracticeFeedback(I18N.t("reading.practiceMoveOn", { pct }), "bad");
-      recordSentence(false);
-      await pause(2000);
-      nextSentence();
+      return nextSentence();
     }
+
+    // 2) missed → break into phrases and work through them
+    setStatus(counter + " — " + I18N.t("reading.practiceBreaking"));
+    const phrases = await breakIntoPhrases(sentence);
+    if (!practice) return;
+    const phraseSpans = renderPhrases(span, phrases);
+    await runPhrases(phrases, phraseSpans, counter);
+    if (!practice) return;
+    await pause(800);
+    nextSentence();
   }
 
-  function revealCurrent() {
-    const span = practice.spans[practice.idx];
-    span.classList.remove("masked", "current");
-    span.classList.add("revealed"); // brief flash so the in-place reveal is obvious
-    span.scrollIntoView({ behavior: "smooth", block: "center" });
-    setTimeout(() => span.classList.remove("revealed"), 1500);
-  }
+  async function runPhrases(phrases, phraseSpans, counter) {
+    for (let j = 0; j < phrases.length; j++) {
+      if (!practice) return;
+      const ps = phraseSpans[j];
+      phraseSpans.forEach((s, k) => s.classList.toggle("current", k === j));
+      ps.scrollIntoView({ behavior: "smooth", block: "center" });
+      const label = counter + " · " + I18N.t("reading.practicePhrase", { j: j + 1, k: phrases.length });
 
-  function recordSentence(passed) {
-    practice.results.push({ sims: practice.sims.slice(), passed });
-    // credit pronunciation/listening a little for satisfactory repeats
-    if (passed) Store.updateSkill("pronunciation", 80, 0.05);
+      // phrase try 1 (normal); if missed, try 2 (slow); then move on regardless
+      let heard = await sayAndHear(phrases[j], false, label);
+      if (heard === null) return;
+      let sim = Speech.similarity(phrases[j], heard || "");
+      if (sim < passThreshold()) {
+        await pause(500);
+        heard = await sayAndHear(phrases[j], true, label); // slower
+        if (heard === null) return;
+        sim = Speech.similarity(phrases[j], heard || "");
+      }
+      revealUnit(ps, phrases[j], heard || "");
+      await pause(1500);
+    }
   }
 
   function nextSentence() {
@@ -495,23 +563,13 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
   function finishPractice() {
     const res = practice.results;
     const total = res.length;
-    const passed = res.filter((r) => r.passed).length;
-
-    // average match for each attempt number (1..3), over sentences that reached it
-    const tryLines = [];
-    for (let k = 0; k < 3; k++) {
-      const sims = res.filter((r) => r.sims.length > k).map((r) => r.sims[k]);
-      if (sims.length) {
-        const avg = Math.round((sims.reduce((a, b) => a + b, 0) / sims.length) * 100);
-        tryLines.push(I18N.t("reading.sumTry", { k: k + 1, pct: avg, count: sims.length }));
-      }
-    }
-    // overall: best attempt per sentence
-    const bests = res.map((r) => Math.max(...r.sims));
-    const overall = total ? Math.round((bests.reduce((a, b) => a + b, 0) / total) * 100) : 0;
+    const passed = res.filter((r) => r.passedWhole).length;
+    const avgWhole = total
+      ? Math.round((res.reduce((a, r) => a + r.whole_sim, 0) / total) * 100)
+      : 0;
     const satPct = total ? Math.round((passed / total) * 100) : 0;
 
-    Store.updateSkill("reading", Math.min(100, overall), 0.1);
+    Store.updateSkill("reading", Math.min(100, avgWhole), 0.1);
     App.renderDashboard();
 
     const box = practiceEl("summary");
@@ -520,17 +578,16 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     const lines = [
       `<b>${I18N.t("reading.practiceDone")}</b>`,
       I18N.t("reading.sumSatisfactory", { pct: satPct, pass: passed, total }),
-      I18N.t("reading.sumOverall", { pct: overall }),
-      ...tryLines,
+      I18N.t("reading.sumOverall", { pct: avgWhole }),
     ];
     for (const line of lines) {
       const d = document.createElement("div");
       d.innerHTML = line;
       box.appendChild(d);
     }
-    setPracticeFeedback(null);
-    practiceEl("status").textContent = "";
-    renderText(lastResult.text); // restore the unmasked, clickable text
+    setStatus("");
+    // leave the revealed, bold-marked text in place as feedback (don't re-render)
+    document.getElementById("rd-text").querySelectorAll(".current").forEach((s) => s.classList.remove("current"));
     document.getElementById("rd-practice-start").classList.remove("hidden");
     document.getElementById("rd-practice-stop").classList.add("hidden");
     practice = null;
