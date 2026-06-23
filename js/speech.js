@@ -247,15 +247,17 @@ const Speech = (() => {
    *  - recording ends BY ITSELF when the speaker falls silent (voice-activity
    *    detection for the OpenAI engine; the Web Speech API does this natively);
    *  - stop() forces an early finish, cancel() discards the recording.
-   *  onStatus receives "listening" | "hearing" | "transcribing". */
-  async function listen({ onStatus } = {}) {
-    if (engine() === "openai") return listenOpenAI(onStatus);
+   *  onStatus receives "listening" | "hearing" | "transcribing".
+   *  `prompt` (OpenAI engine only) is passed to the transcriber as context to
+   *  bias recognition toward the right vocabulary/spelling. */
+  async function listen({ onStatus, prompt } = {}) {
+    if (engine() === "openai") return listenOpenAI(onStatus, prompt);
     return listenBrowser(onStatus);
   }
 
   let audioCtx = null; // shared; created after the first user gesture
 
-  async function listenOpenAI(onStatus) {
+  async function listenOpenAI(onStatus, prompt) {
     const stream = await getMicStream();
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === "suspended") await audioCtx.resume().catch(() => {});
@@ -332,7 +334,7 @@ const Speech = (() => {
         onStatus?.("transcribing");
         try {
           const blob = new Blob(recChunks, { type: rec.mimeType || "audio/webm" });
-          resolveResult(await transcribeOpenAI(blob));
+          resolveResult(await transcribeOpenAI(blob, prompt));
         } catch (e) {
           rejectResult(e);
         }
@@ -392,13 +394,14 @@ const Speech = (() => {
     };
   }
 
-  async function transcribeOpenAI(blob) {
+  async function transcribeOpenAI(blob, prompt) {
     const key = Store.app.settings.openaiKey.trim();
     const form = new FormData();
     form.append("file", blob, "speech.webm");
     form.append("model", "gpt-4o-transcribe");
     const iso = bcp().split("-")[0];
-    if (iso) form.append("language", iso);
+    if (iso) form.append("language", iso); // already tell it the language
+    if (prompt) form.append("prompt", prompt.slice(0, 900)); // context to bias recognition
     const resp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}` },

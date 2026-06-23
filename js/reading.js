@@ -424,6 +424,22 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
 
   /* --- breaking a sentence into phrases (AI, with a local fallback) --- */
 
+  const wordCount = (s) => expectedWords(s).length;
+
+  /** Greedily merge adjacent phrases while the combined length stays ≤ 8 words,
+   *  so phrases land in the 4–8 word target (and a short sentence stays whole). */
+  function mergePhrases(phrases) {
+    const out = [];
+    for (const p of phrases) {
+      if (out.length && wordCount(out[out.length - 1]) + wordCount(p) <= 8) {
+        out[out.length - 1] = (out[out.length - 1] + " " + p).replace(/\s+/g, " ").trim();
+      } else {
+        out.push(p);
+      }
+    }
+    return out;
+  }
+
   function localSplit(sentence) {
     const parts = sentence
       .split(/(?<=[,;:、，；：…—–-])\s+/u)
@@ -433,14 +449,19 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
   }
 
   async function breakIntoPhrases(sentence) {
+    // A short sentence is repeated whole rather than chopped up.
+    if (wordCount(sentence) <= 8) return [sentence];
     const lang = Store.app.language.name;
+    let phrases;
     try {
       const out = await AI.call({
         system: `You split ${lang} sentences into short, natural phrases for a learner to repeat back.`,
         user:
-          `Split this ${lang} sentence into a few short phrases (typically at commas, conjunctions, or clause ` +
-          `boundaries). Keep the original words and order exactly — do not paraphrase, add, or drop words. ` +
-          `Each phrase should be easy to say in one breath.\n\nSentence: ${sentence}`,
+          `Split this ${lang} sentence into natural phrases of about 4 to 8 words each (split at commas, ` +
+          `conjunctions, or clause boundaries). Keep the original words and order exactly — do not paraphrase, ` +
+          `add, or drop words. Combine adjacent short fragments so each phrase has at least 4 words where ` +
+          `possible, and never exceed 8 words. Each phrase should be easy to say in one breath.\n\n` +
+          `Sentence: ${sentence}`,
         schema: {
           type: "object",
           properties: { phrases: { type: "array", items: { type: "string" } } },
@@ -449,11 +470,12 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
         },
         maxTokens: 1024,
       });
-      const phrases = (out.phrases || []).map((s) => s.trim()).filter(Boolean);
-      return phrases.length > 1 ? phrases : localSplit(sentence);
+      phrases = (out.phrases || []).map((s) => s.trim()).filter(Boolean);
+      if (phrases.length < 1) phrases = localSplit(sentence);
     } catch (e) {
-      return localSplit(sentence);
+      phrases = localSplit(sentence);
     }
+    return mergePhrases(phrases);
   }
 
   /** Replace a sentence span's content with masked phrase sub-spans. */
@@ -483,6 +505,7 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
       sentences: items.map((i) => i.text),
       spans: items.map((i) => i.span),
       idx: 0,
+      prevSentence: "", // context fed to the transcriber
       results: [], // per sentence: {whole_sim, passedWhole}
       listener: null,
     };
@@ -508,10 +531,11 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
   }
 
   /** Speak `text` (speakOpts: {} | {slow:true} | {slow:"gentle"}), auto-record,
-   *  and return the transcript (or null if cancelled). Shows the transcript. */
-  async function sayAndHear(text, speakOpts, counter) {
+   *  and return the transcript (or null if cancelled). `prompt` is context fed
+   *  to the transcriber. The previous transcript stays visible until this one
+   *  replaces it, so the learner sees a result after every attempt. */
+  async function sayAndHear(text, speakOpts, counter, prompt) {
     if (!practice) return null;
-    showHeard(null);
     try {
       await Speech.speak(text, speakOpts || {});
     } catch (e) {
@@ -521,6 +545,7 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     let listener;
     try {
       listener = await Speech.listen({
+        prompt,
         onStatus: (state) => {
           if (!practice) return;
           if (state === "listening" || state === "hearing") setStatus(counter + " — " + I18N.t("listen.recording"));
@@ -558,8 +583,12 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     const counter = I18N.t("reading.practiceSentence", { i: i + 1, n: practice.sentences.length });
     setStatus(counter);
 
+    // Context for the transcriber: the previous sentence (not the current
+    // target, so it can't simply echo the answer back).
+    const prevCtx = practice.prevSentence || "";
+
     // 1) whole sentence, once
-    const heard = await sayAndHear(sentence, {}, counter);
+    const heard = await sayAndHear(sentence, {}, counter, prevCtx);
     if (heard === null) return; // cancelled
     const g = gradeUnit(sentence, heard);
     practice.results.push({ whole_sim: g.score, passedWhole: g.passed });
@@ -567,6 +596,7 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     if (g.passed) {
       revealUnit(span, sentence, heard || "");
       Store.updateSkill("pronunciation", 80, 0.05);
+      practice.prevSentence = sentence;
       await pause(600);
       return nextSentence();
     }
@@ -576,25 +606,28 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     const phrases = await breakIntoPhrases(sentence);
     if (!practice) return;
     const phraseSpans = renderPhrases(span, phrases);
-    await runPhrases(phrases, phraseSpans, counter);
+    await runPhrases(phrases, phraseSpans, counter, prevCtx);
     if (!practice) return;
+    practice.prevSentence = sentence;
     nextSentence();
   }
 
-  async function runPhrases(phrases, phraseSpans, counter) {
+  async function runPhrases(phrases, phraseSpans, counter, prevCtx) {
     for (let j = 0; j < phrases.length; j++) {
       if (!practice) return;
       const ps = phraseSpans[j];
       phraseSpans.forEach((s, k) => s.classList.toggle("current", k === j));
       ps.scrollIntoView({ behavior: "smooth", block: "center" });
       const label = counter + " · " + I18N.t("reading.practicePhrase", { j: j + 1, k: phrases.length });
+      // context: previous sentence + the phrases already done in this sentence
+      const prompt = [prevCtx, ...phrases.slice(0, j)].filter(Boolean).join(" ");
 
       // up to three attempts: first two at normal speed, the third a little
       // slower. Stop early if a repeat passes; otherwise move on after the 3rd.
       let heard = null;
       for (let attempt = 1; attempt <= 3; attempt++) {
         const speakOpts = attempt === 3 ? { slow: "gentle" } : {};
-        heard = await sayAndHear(phrases[j], speakOpts, label);
+        heard = await sayAndHear(phrases[j], speakOpts, label, prompt);
         if (heard === null) return; // cancelled
         if (gradeUnit(phrases[j], heard).passed) break;
       }
