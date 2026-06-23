@@ -341,7 +341,7 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     practiceEl("status").textContent = msg || "";
   }
 
-  /* --- word-level "missed" marking (the in-text feedback) --- */
+  /* --- grading a repeat --- */
 
   function heardSet(heard) {
     const set = new Set();
@@ -355,20 +355,52 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     return set;
   }
 
+  function expectedWords(text) {
+    const out = [];
+    for (const s of segments(text)) {
+      if (s.isWord) {
+        const n = Speech.normalize(s.text);
+        if (n) out.push(n);
+      }
+    }
+    if (!out.length) for (const w of Speech.normalize(text).split(" ")) if (w) out.push(w);
+    return out;
+  }
+
+  /** Grade a repeat. Combines character-level similarity with word recall (the
+   *  fraction of the expected words that appear in the transcript), and takes
+   *  the better of the two. This rescues short phrases, where one mis-heard
+   *  character or an extra word would otherwise tank a char-only score even
+   *  though every word is present. Passes if all words are present OR the
+   *  combined score clears the cutoff. */
+  function gradeUnit(expected, heard) {
+    heard = heard || "";
+    const words = expectedWords(expected);
+    const set = heardSet(heard);
+    const missed = words.filter((w) => !set.has(w));
+    const recall = words.length ? (words.length - missed.length) / words.length : 1;
+    const charSim = Speech.similarity(expected, heard);
+    const score = Math.max(charSim, recall);
+    const passed = !!heard && (missed.length === 0 || score >= passThreshold());
+    return { passed, missed, score };
+  }
+
+  /* --- in-text feedback --- */
+
   /** Reveal a unit (sentence or phrase) and bold the words the learner missed
    *  on their last repeat. If the repeat was nowhere near, bold the whole unit. */
   function revealUnit(span, expected, heard) {
     span.classList.remove("masked", "current");
     span.classList.add("revealed");
+    const g = gradeUnit(expected, heard);
     const wordSpans = span.querySelectorAll(".w-click");
-    const sim = Speech.similarity(expected, heard);
-    if (!heard || sim < NEAR) {
+    if (!heard || g.score < NEAR) {
       wordSpans.forEach((ws) => ws.classList.add("missed"));
     } else {
-      const set = heardSet(heard);
+      const missedSet = new Set(g.missed);
       wordSpans.forEach((ws) => {
         const n = Speech.normalize(ws.textContent);
-        if (n && !set.has(n)) ws.classList.add("missed");
+        if (n && missedSet.has(n)) ws.classList.add("missed");
       });
     }
     span.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -510,13 +542,13 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     // 1) whole sentence, once
     const heard = await sayAndHear(sentence, false, counter);
     if (heard === null) return; // cancelled
-    const sim = Speech.similarity(sentence, heard || "");
-    practice.results.push({ whole_sim: sim, passedWhole: sim >= passThreshold() });
+    const g = gradeUnit(sentence, heard);
+    practice.results.push({ whole_sim: g.score, passedWhole: g.passed });
 
-    if (sim >= passThreshold()) {
+    if (g.passed) {
       revealUnit(span, sentence, heard || "");
-      if (sim >= passThreshold()) Store.updateSkill("pronunciation", 80, 0.05);
-      await pause(2000);
+      Store.updateSkill("pronunciation", 80, 0.05);
+      await pause(600);
       return nextSentence();
     }
 
@@ -527,7 +559,6 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     const phraseSpans = renderPhrases(span, phrases);
     await runPhrases(phrases, phraseSpans, counter);
     if (!practice) return;
-    await pause(800);
     nextSentence();
   }
 
@@ -542,15 +573,12 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
       // phrase try 1 (normal); if missed, try 2 (slow); then move on regardless
       let heard = await sayAndHear(phrases[j], false, label);
       if (heard === null) return;
-      let sim = Speech.similarity(phrases[j], heard || "");
-      if (sim < passThreshold()) {
-        await pause(500);
-        heard = await sayAndHear(phrases[j], true, label); // slower
+      if (!gradeUnit(phrases[j], heard).passed) {
+        heard = await sayAndHear(phrases[j], true, label); // slower retry
         if (heard === null) return;
-        sim = Speech.similarity(phrases[j], heard || "");
       }
+      // reveal in place, then go straight to the next phrase (no delay)
       revealUnit(ps, phrases[j], heard || "");
-      await pause(1500);
     }
   }
 

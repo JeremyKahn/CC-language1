@@ -146,10 +146,10 @@ input[type="text"], input[type="password"], textarea, select {
 /* reading */
 .reading-text { font-size: 1.1rem; line-height: 1.8; white-space: pre-wrap; margin-top: 1rem; }
 .reading-text.blurred { filter: blur(6px); user-select: none; }
-/* masking for the listening drill (transparent + shadow blurs cleanly across
-   line wraps, unlike filter:blur on inline spans). Applies to whole sentences
-   and to phrase sub-segments. */
-.reading-text .masked { color: transparent; text-shadow: 0 0 9px rgba(40, 30, 20, 0.6); user-select: none; }
+/* masking for the listening drill. Uses filter:blur (not a color property) so
+   it survives the Dark Reader extension, which rewrites color/text-shadow.
+   Applies to whole sentences and to phrase sub-segments. */
+.reading-text .masked { filter: blur(6px); user-select: none; }
 .reading-text .current { background: var(--accent-soft); border-radius: 4px; box-shadow: 0 0 0 3px var(--accent-soft); }
 .reading-text .revealed { background: #fdf3d8; border-radius: 4px; box-shadow: 0 0 0 3px #fdf3d8; transition: background 1.5s ease; }
 /* in-text feedback: words the learner missed on their last repeat */
