@@ -38,8 +38,9 @@ const Speech = (() => {
 
   /* ---------------- TTS ---------------- */
 
-  /** Speak text. onEngine (optional) is called when playback starts with
-   *  {engine, voice, fallback?} describing what is ACTUALLY being used. */
+  /** Speak text. `slow` may be false, true (very slow/careful), or "gentle"
+   *  (a little slower than normal). onEngine (optional) is called when playback
+   *  starts with {engine, voice, fallback?} describing what is ACTUALLY used. */
   async function speak(text, { slow = false, onEngine = null } = {}) {
     stop();
     const token = speakToken;
@@ -90,9 +91,12 @@ const Speech = (() => {
     const key = Store.app.settings.openaiKey.trim();
     if (!key) throw new Error("no OpenAI key set");
     const voice = Store.app.settings.voice || "alloy";
-    const instructions = slow
-      ? `Speak in ${langName()}. Speak very slowly and extremely clearly, with a short pause between each word, enunciating every syllable, like a patient teacher helping a beginner repeat the phrase.`
-      : `Read aloud in ${langName()} like a skilled, engaged audiobook narrator: natural, expressive intonation, varied pitch and rhythm, conveying the meaning and feeling of the text. Articulate clearly at a relaxed pace suitable for a language learner.`;
+    const instructions =
+      slow === "gentle"
+        ? `Speak in ${langName()}. Speak a little more slowly than a normal pace, clearly and warmly, like gently helping a learner repeat the phrase.`
+        : slow
+          ? `Speak in ${langName()}. Speak very slowly and extremely clearly, with a short pause between each word, enunciating every syllable, like a patient teacher helping a beginner repeat the phrase.`
+          : `Read aloud in ${langName()} like a skilled, engaged audiobook narrator: natural, expressive intonation, varied pitch and rhythm, conveying the meaning and feeling of the text. Articulate clearly at a relaxed pace suitable for a language learner.`;
 
     const chunks = chunkText(text);
     let announced = false;
@@ -130,7 +134,8 @@ const Speech = (() => {
     const url = URL.createObjectURL(blob);
     return new Promise((resolve, reject) => {
       currentAudio = new Audio(url);
-      if (slow) currentAudio.playbackRate = 0.85; // belt-and-braces on top of instructions
+      // belt-and-braces on top of the spoken-pace instructions
+      currentAudio.playbackRate = slow === "gentle" ? 0.92 : slow ? 0.85 : 1;
       currentAudio.onended = () => {
         URL.revokeObjectURL(url);
         resolve();
@@ -194,7 +199,7 @@ const Speech = (() => {
     return new Promise((resolve, reject) => {
       const u = new SpeechSynthesisUtterance(text);
       u.lang = bcp();
-      u.rate = slow ? 0.55 : 0.9;
+      u.rate = slow === "gentle" ? 0.78 : slow ? 0.55 : 0.9;
       if (voice) u.voice = voice;
       u.onend = () => resolve();
       u.onerror = (e) => {

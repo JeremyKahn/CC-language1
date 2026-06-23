@@ -341,17 +341,32 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     practiceEl("status").textContent = msg || "";
   }
 
+  function showHeard(heard) {
+    practiceEl("heard").textContent =
+      heard == null
+        ? ""
+        : heard
+          ? I18N.t("listen.youSaid", { heard })
+          : I18N.t("listen.heardNothing");
+  }
+
   /* --- grading a repeat --- */
+
+  // normalize + fold diacritics, so accent differences (café/cafe) and the
+  // transcriber dropping accents don't count words as missed
+  function norm(s) {
+    return Speech.normalize(s).normalize("NFD").replace(/\p{Diacritic}/gu, "");
+  }
 
   function heardSet(heard) {
     const set = new Set();
     for (const s of segments(heard)) {
       if (s.isWord) {
-        const n = Speech.normalize(s.text);
+        const n = norm(s.text);
         if (n) set.add(n);
       }
     }
-    for (const w of Speech.normalize(heard).split(" ")) if (w) set.add(w);
+    for (const w of norm(heard).split(" ")) if (w) set.add(w);
     return set;
   }
 
@@ -359,11 +374,11 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     const out = [];
     for (const s of segments(text)) {
       if (s.isWord) {
-        const n = Speech.normalize(s.text);
+        const n = norm(s.text);
         if (n) out.push(n);
       }
     }
-    if (!out.length) for (const w of Speech.normalize(text).split(" ")) if (w) out.push(w);
+    if (!out.length) for (const w of norm(text).split(" ")) if (w) out.push(w);
     return out;
   }
 
@@ -399,7 +414,7 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     } else {
       const missedSet = new Set(g.missed);
       wordSpans.forEach((ws) => {
-        const n = Speech.normalize(ws.textContent);
+        const n = norm(ws.textContent);
         if (n && missedSet.has(n)) ws.classList.add("missed");
       });
     }
@@ -487,15 +502,18 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     practice = null;
     if (lastResult) renderText(lastResult.text); // restore plain, clickable text
     setStatus("");
+    showHeard(null);
     document.getElementById("rd-practice-start").classList.remove("hidden");
     document.getElementById("rd-practice-stop").classList.add("hidden");
   }
 
-  /** Speak `text`, auto-record, and return the transcript (or null if cancelled). */
-  async function sayAndHear(text, slow, counter) {
+  /** Speak `text` (speakOpts: {} | {slow:true} | {slow:"gentle"}), auto-record,
+   *  and return the transcript (or null if cancelled). Shows the transcript. */
+  async function sayAndHear(text, speakOpts, counter) {
     if (!practice) return null;
+    showHeard(null);
     try {
-      await Speech.speak(text, { slow });
+      await Speech.speak(text, speakOpts || {});
     } catch (e) {
       App.toast(e.message);
     }
@@ -522,6 +540,7 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     }
     if (!practice) return null;
     practice.listener = null;
+    if (heard !== null) showHeard(heard); // show what the transcriber heard
     return heard; // may be null if cancelled
   }
 
@@ -540,7 +559,7 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
     setStatus(counter);
 
     // 1) whole sentence, once
-    const heard = await sayAndHear(sentence, false, counter);
+    const heard = await sayAndHear(sentence, {}, counter);
     if (heard === null) return; // cancelled
     const g = gradeUnit(sentence, heard);
     practice.results.push({ whole_sim: g.score, passedWhole: g.passed });
@@ -570,12 +589,14 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
       ps.scrollIntoView({ behavior: "smooth", block: "center" });
       const label = counter + " · " + I18N.t("reading.practicePhrase", { j: j + 1, k: phrases.length });
 
-      // phrase try 1 (normal); if missed, try 2 (slow); then move on regardless
-      let heard = await sayAndHear(phrases[j], false, label);
-      if (heard === null) return;
-      if (!gradeUnit(phrases[j], heard).passed) {
-        heard = await sayAndHear(phrases[j], true, label); // slower retry
-        if (heard === null) return;
+      // up to three attempts: first two at normal speed, the third a little
+      // slower. Stop early if a repeat passes; otherwise move on after the 3rd.
+      let heard = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const speakOpts = attempt === 3 ? { slow: "gentle" } : {};
+        heard = await sayAndHear(phrases[j], speakOpts, label);
+        if (heard === null) return; // cancelled
+        if (gradeUnit(phrases[j], heard).passed) break;
       }
       // reveal in place, then go straight to the next phrase (no delay)
       revealUnit(ps, phrases[j], heard || "");
@@ -614,6 +635,7 @@ ${lastResult.glossary.length ? `<h2>Glossary</h2><table>${glossRows}</table>` : 
       box.appendChild(d);
     }
     setStatus("");
+    showHeard(null);
     // leave the revealed, bold-marked text in place as feedback (don't re-render)
     document.getElementById("rd-text").querySelectorAll(".current").forEach((s) => s.classList.remove("current"));
     document.getElementById("rd-practice-start").classList.remove("hidden");
