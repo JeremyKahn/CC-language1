@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <title>LinguaForge — AI Language Learning</title>
-<link rel="stylesheet" href="css/style.css?v=16">
+<link rel="stylesheet" href="css/style.css?v=17">
 </head>
 <body>
 
@@ -23,6 +23,7 @@
   <button class="tab" data-view="reading" data-i18n="tab.reading">📖 Reading</button>
   <button class="tab" data-view="vocab" data-i18n="tab.vocab">📚 Vocabulary</button>
   <button class="tab" data-view="grammar" data-i18n="tab.grammar">🧩 Grammar</button>
+  <button class="tab" data-view="drills" data-i18n="tab.drills">🎯 Drills</button>
 </nav>
 
 <main>
@@ -237,6 +238,37 @@
   </div>
 </section>
 
+<!-- ======================= DRILLS ======================= -->
+<section id="view-drills" class="view">
+  <h2 data-i18n="drills.h2">Custom drills</h2>
+  <div class="card">
+    <label class="block"><span data-i18n="drills.describe">Describe the exercises you want</span>
+      <textarea id="dr-desc" rows="4" data-i18n-ph="drills.descPh" placeholder="e.g. Drill me on the genders of common nouns; or: all tenses, moods and persons for 100 verbs; or: make a short story in English, then break it into sentences to translate aloud."></textarea>
+    </label>
+    <div class="drills-types">
+      <span class="drills-types-label" data-i18n="drills.type">Type of exercise</span>
+      <label><input type="radio" name="dr-type" value="multiple_choice" checked> <span data-i18n="drills.typeMc">Multiple choice</span></label>
+      <label><input type="radio" name="dr-type" value="short_written"> <span data-i18n="drills.typeShort">Short written answer</span></label>
+      <label><input type="radio" name="dr-type" value="long_written"> <span data-i18n="drills.typeLong">Long written answer</span></label>
+      <label><input type="radio" name="dr-type" value="spoken"> <span data-i18n="drills.typeSpoken">Spoken answer</span></label>
+      <label><input type="radio" name="dr-type" value="translate_spoken"> <span id="dr-type-translate" data-i18n="drills.typeTranslate">English → spoken (your language)</span></label>
+    </div>
+    <div class="row gap wrap" style="align-items:flex-end">
+      <label class="inline"><span data-i18n="drills.count">Number of exercises</span>
+        <input type="number" id="dr-count" min="1" max="100" value="20">
+      </label>
+      <button id="dr-generate" class="btn primary" data-i18n="drills.generate">⚡ Generate exercises</button>
+    </div>
+  </div>
+  <div id="dr-output" class="hidden">
+    <div class="card">
+      <h3 id="dr-set-title"></h3>
+      <div id="dr-list"></div>
+      <div id="dr-summary" class="feedback hidden"></div>
+    </div>
+  </div>
+</section>
+
 </main>
 
 <!-- ======================= MODALS ======================= -->
@@ -306,15 +338,16 @@
 <div id="toast"></div>
 <div id="busy" class="hidden"><div class="spinner"></div><div id="busy-msg">Thinking…</div></div>
 
-<script src="js/storage.js?v=16"></script>
-<script src="js/ai.js?v=16"></script>
-<script src="js/i18n.js?v=16"></script>
-<script src="js/speech.js?v=16"></script>
-<script src="js/anki.js?v=16"></script>
-<script src="js/vocab.js?v=16"></script>
-<script src="js/listen.js?v=16"></script>
-<script src="js/reading.js?v=16"></script>
-<script src="js/grammar.js?v=16"></script>
-<script src="js/app.js?v=16"></script>
+<script src="js/storage.js?v=17"></script>
+<script src="js/ai.js?v=17"></script>
+<script src="js/i18n.js?v=17"></script>
+<script src="js/speech.js?v=17"></script>
+<script src="js/anki.js?v=17"></script>
+<script src="js/vocab.js?v=17"></script>
+<script src="js/listen.js?v=17"></script>
+<script src="js/reading.js?v=17"></script>
+<script src="js/grammar.js?v=17"></script>
+<script src="js/drills.js?v=17"></script>
+<script src="js/app.js?v=17"></script>
 </body>
 </html>

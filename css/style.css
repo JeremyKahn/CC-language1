@@ -195,6 +195,21 @@ input[type="text"], input[type="password"], textarea, select {
 .exercise .verdict { margin-top: 0.4rem; font-size: 0.9rem; }
 .exercise input.blank { width: auto; min-width: 200px; }
 
+/* drills */
+.block { display: block; font-size: 0.9rem; }
+.block > span { display: block; margin-bottom: 0.3rem; }
+.inline { display: inline-flex; flex-direction: column; gap: 0.3rem; font-size: 0.9rem; }
+.inline input[type="number"] { width: 6rem; }
+.drills-types { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; align-items: center; margin: 0.9rem 0; }
+.drills-types-label { font-size: 0.9rem; font-weight: bold; width: 100%; }
+.drills-types label { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; }
+.drills-types input[type="radio"] { width: auto; }
+.drill .answer-row { margin: 0.4rem 0; }
+.drill .answer-row input[type="text"] { max-width: 420px; }
+.drill textarea { margin-top: 0.3rem; }
+.drill .heard { font-size: 1rem; margin: 0.3rem 0; }
+.drill.graded { opacity: 0.97; }
+
 /* modal */
 #modal-backdrop {
   position: fixed; inset: 0; background: rgba(40, 30, 20, 0.45);

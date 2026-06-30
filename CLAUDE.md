@@ -73,6 +73,10 @@ js/reading.js     Reading: AI text generation, glossary, PDF, and the
                   sentence-by-sentence repeat drill (the most-iterated feature).
 js/grammar.js     Grammar: AI curriculum, lessons, exercises (incl. AI-graded
                   translation).
+js/drills.js      Drills: user-described custom exercise sets of 5 types
+                  (multiple choice, short/long written, spoken, English→spoken
+                  translation); per-exercise grading (local for MC/short, AI for
+                  long written + all spoken) plus a total score.
 js/app.js         App: navigation, session (user+language), Settings/profile
                   modals, dashboard, toast/busy helpers, init.
 README.md         User-facing documentation.

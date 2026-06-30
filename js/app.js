@@ -28,6 +28,7 @@ const App = (() => {
   function showView(name) {
     Listen.stopAll(); // cancel any active recording/audio when navigating
     Reading.stopPractice();
+    Drills.stopAll();
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
     document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
     document.getElementById("view-" + name).classList.add("active");
@@ -35,6 +36,7 @@ const App = (() => {
     if (name === "grammar") Grammar.refresh();
     if (name === "listen") Listen.refresh();
     if (name === "vocab") Vocab.render();
+    if (name === "drills") Drills.refresh();
     if (name === "dashboard") renderDashboard();
   }
 
@@ -219,6 +221,7 @@ const App = (() => {
     Vocab.render();
     Listen.refresh();
     Grammar.refresh();
+    Drills.refresh();
   }
 
   /* ---------------- init ---------------- */
@@ -241,6 +244,7 @@ const App = (() => {
     Listen.init();
     Reading.init();
     Grammar.init();
+    Drills.init();
 
     if (Store.app.user && Store.app.language) {
       Store.loadProfile();
