@@ -73,10 +73,15 @@ js/reading.js     Reading: AI text generation, glossary, PDF, and the
                   sentence-by-sentence repeat drill (the most-iterated feature).
 js/grammar.js     Grammar: AI curriculum, lessons, exercises (incl. AI-graded
                   translation).
-js/drills.js      Drills: user-described custom exercise sets of 5 types
-                  (multiple choice, short/long written, spoken, English→spoken
-                  translation); per-exercise grading (local for MC/short, AI for
-                  long written + all spoken) plus a total score.
+js/drills.js      Drills: saved drill definitions (title/description/type/count,
+                  5 types: multiple choice, short/long written, spoken,
+                  English→spoken translation) with edit/overwrite/save-as-new;
+                  wordlists (static: hand/upload/AI-generated; dynamic: AI-grown
+                  in batches as words are learned); spaced repetition tracked
+                  per (drill, wordlist) pair (see file header for the exact
+                  algorithm: EMA word strength, learned at s≥0.8, dynamic lists
+                  grow at 75% learned); per-exercise grading (local for
+                  MC/short, AI for long written + all spoken) plus a total score.
 js/app.js         App: navigation, session (user+language), Settings/profile
                   modals, dashboard, toast/busy helpers, init.
 README.md         User-facing documentation.

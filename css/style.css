@@ -209,6 +209,16 @@ input[type="text"], input[type="password"], textarea, select {
 .drill textarea { margin-top: 0.3rem; }
 .drill .heard { font-size: 1rem; margin: 0.3rem 0; }
 .drill.graded { opacity: 0.97; }
+.saved-list { margin: 0.4rem 0; }
+.saved-item {
+  display: flex; justify-content: space-between; align-items: center; gap: 0.6rem;
+  padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: var(--radius);
+  margin: 0.35rem 0; cursor: pointer;
+}
+.saved-item:hover { border-color: var(--accent); }
+.saved-item.selected { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); background: var(--bg); }
+.saved-item .saved-title { font-weight: bold; }
+.saved-item .saved-main { min-width: 0; }
 
 /* modal */
 #modal-backdrop {

@@ -66,6 +66,11 @@ const Store = (() => {
       listen: { level: 1, successes: 0, attempts: 0, recent: [], passCut: 75, excellentCut: 92 },
       grammar: { curriculum: [], current: 0, progress: {} }, // progress[idx] = {taught, score, done}
       reading: { sessions: 0 },
+      // drills: saved drill definitions, wordlists, and spaced-repetition state.
+      // srs["<drillId>::<wordlistId>"] = { completed, words: { word: {s, last, n} } }
+      // — learning is tracked per (drill, wordlist) PAIR: the same word in two
+      // different drills has two independent records.
+      drills: { saved: [], wordlists: [], srs: {}, sel: { drill: null, wl: null } },
     };
   }
 

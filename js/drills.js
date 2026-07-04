@@ -1,16 +1,41 @@
-/* drills.js — Custom drills tab. The learner describes the exercises they want,
- * picks one of five types, and a count; the AI generates that many exercises.
- * Each exercise is graded right after it's answered:
- *   - multiple_choice / short_written  → graded locally
- *   - long_written                     → AI-graded
- *   - spoken / translate_spoken        → recorded, transcribed, then AI-graded
- * A running total score is shown once every exercise has been answered. */
+/* drills.js — Custom drills tab: saved drills, wordlists, spaced repetition.
+ *
+ * A DRILL is a saved definition: {id, title, desc, type, count}. Created and
+ * edited in a form; auto-saved to the profile. Editing can overwrite the
+ * drill or be saved as a new one.
+ *
+ * A WORDLIST is {id, name, kind: "static"|"dynamic", words, prompt, batch}.
+ * Static lists are made by hand, by file upload, or AI-generated once.
+ * Dynamic lists are AI-generated and GROW: when the learner has learned ≥75%
+ * of the list's words (for the drill being practised), a new batch of `batch`
+ * words — different from all existing ones — is generated and appended.
+ *
+ * SPACED REPETITION is tracked per (drill, wordlist) PAIR — the same word in
+ * two drills (e.g. noun meaning vs noun gender) has independent records:
+ *   srs["drillId::wlId"] = { completed, words: { word: {s, last, n} } }
+ *   - s     estimated probability (0-1) the learner answers this word right,
+ *           updated after each drill by an EMA: s += 0.4*(score/100 - s),
+ *           starting from 0.2 the first time a word appears. A word counts
+ *           as LEARNED when s ≥ 0.8 (≈ three good answers in a row).
+ *   - last  value of `completed` when the word last appeared (drill counts,
+ *           not wall-clock time); n = times drilled.
+ * Selection of N exercise words: need = (1 - s) + 0.25·min(1, since/6) for
+ * seen words (recent misses dominate; long-unseen adds a bonus), 0.9 for
+ * never-seen words. Top N by need (with a little jitter); words that were
+ * recently missed badly may be included twice; short lists cycle. The final
+ * selection is shuffled and handed to the AI, one exercise per word. */
 "use strict";
 
 const Drills = (() => {
-  let current = null; // {desc, type, lang, exercises, scores: [], listener}
+  let current = null; // active run: {drillId, wlId, type, desc, lang, words, exercises, scores, listener}
+  let editingDrill; // undefined = form closed, null = creating, "<id>" = editing
+  let editingWl; // same convention for the wordlist form
 
-  // i18n keys for each type's human label (the title + radio captions reuse these)
+  const LEARNED_AT = 0.8; // s ≥ this → word is "learned"
+  const GROW_AT = 0.75; // share of a dynamic list learned → add a new batch
+  const EMA_ALPHA = 0.4;
+  const S_INIT = 0.2;
+
   const TYPE_KEY = {
     multiple_choice: "drills.typeMc",
     short_written: "drills.typeShort",
@@ -28,28 +53,501 @@ const Drills = (() => {
     translate_spoken: "pronunciation",
   };
 
-  const isSpoken = (t) => t === "spoken" || t === "translate_spoken";
+  function el(id) {
+    return document.getElementById(id);
+  }
+
+  function D() {
+    const p = Store.profile;
+    if (!p.drills) {
+      p.drills = { saved: [], wordlists: [], srs: {}, sel: { drill: null, wl: null } };
+    }
+    if (!p.drills.sel) p.drills.sel = { drill: null, wl: null };
+    return p.drills;
+  }
+
+  function uid() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
 
   function typeLabel(type) {
     return I18N.t(TYPE_KEY[type], { lang: Store.app.language?.name || "" });
   }
 
-  function selectedType() {
-    const r = document.querySelector('input[name="dr-type"]:checked');
-    return r ? r.value : "multiple_choice";
+  function shuffle(a) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
   }
 
-  /* ---------------- generation ---------------- */
+  /* ================= drills: list + form ================= */
 
-  async function generate() {
-    const lang = Store.app.language.name;
-    const desc = document.getElementById("dr-desc").value.trim();
+  function renderSavedDrills() {
+    const d = D();
+    const list = el("dr-saved-list");
+    list.innerHTML = "";
+    el("dr-saved-empty").classList.toggle("hidden", d.saved.length > 0);
+    for (const drill of d.saved) {
+      const row = document.createElement("div");
+      row.className = "saved-item" + (d.sel.drill === drill.id ? " selected" : "");
+      const main = document.createElement("div");
+      main.className = "saved-main";
+      const t = document.createElement("div");
+      t.className = "saved-title";
+      t.textContent = drill.title;
+      const m = document.createElement("div");
+      m.className = "muted small";
+      m.textContent = typeLabel(drill.type) + " · " + I18N.t("drills.nEx", { n: drill.count });
+      main.append(t, m);
+      const ops = document.createElement("div");
+      ops.className = "row gap";
+      const edit = document.createElement("button");
+      edit.className = "btn small";
+      edit.textContent = "✎";
+      edit.onclick = (e) => {
+        e.stopPropagation();
+        openDrillForm(drill.id);
+      };
+      const del = document.createElement("button");
+      del.className = "btn small ghost";
+      del.textContent = "🗑";
+      del.onclick = (e) => {
+        e.stopPropagation();
+        if (!confirm(I18N.t("drills.deleteConfirm", { title: drill.title }))) return;
+        d.saved = d.saved.filter((x) => x.id !== drill.id);
+        for (const k of Object.keys(d.srs)) if (k.startsWith(drill.id + "::")) delete d.srs[k];
+        if (d.sel.drill === drill.id) d.sel.drill = null;
+        Store.saveProfile();
+        renderAll();
+      };
+      ops.append(edit, del);
+      row.append(main, ops);
+      row.onclick = () => {
+        d.sel.drill = drill.id;
+        Store.saveProfile();
+        renderAll();
+      };
+      list.appendChild(row);
+    }
+  }
+
+  function openDrillForm(id) {
+    editingDrill = id ?? null;
+    const drill = id ? D().saved.find((x) => x.id === id) : null;
+    el("dr-form-heading").textContent = I18N.t(drill ? "drills.formEdit" : "drills.formNew");
+    el("dr-title").value = drill ? drill.title : "";
+    el("dr-desc").value = drill ? drill.desc : "";
+    el("dr-count").value = drill ? drill.count : 20;
+    const type = drill ? drill.type : "multiple_choice";
+    document.querySelectorAll('input[name="dr-type"]').forEach((r) => (r.checked = r.value === type));
+    el("dr-save-new").classList.toggle("hidden", !drill);
+    el("dr-form").classList.remove("hidden");
+    el("dr-form").scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function closeDrillForm() {
+    editingDrill = undefined;
+    el("dr-form").classList.add("hidden");
+  }
+
+  function saveDrillForm(asNew) {
+    const d = D();
+    const desc = el("dr-desc").value.trim();
     if (!desc) return App.toast(I18N.t("drills.needDesc"));
-    const type = selectedType();
-    let count = parseInt(document.getElementById("dr-count").value, 10);
+    const title = el("dr-title").value.trim() || desc.slice(0, 40) + (desc.length > 40 ? "…" : "");
+    const typeRadio = document.querySelector('input[name="dr-type"]:checked');
+    const type = typeRadio ? typeRadio.value : "multiple_choice";
+    let count = parseInt(el("dr-count").value, 10);
     if (!Number.isFinite(count) || count < 1) count = 1;
     if (count > 100) count = 100;
-    document.getElementById("dr-count").value = count;
+
+    if (editingDrill && !asNew) {
+      const drill = d.saved.find((x) => x.id === editingDrill);
+      if (drill) Object.assign(drill, { title, desc, type, count });
+      d.sel.drill = editingDrill;
+    } else {
+      const drill = { id: uid(), title, desc, type, count };
+      d.saved.push(drill);
+      d.sel.drill = drill.id;
+    }
+    Store.saveProfile();
+    closeDrillForm();
+    renderAll();
+    App.toast(I18N.t("drills.savedToast"));
+  }
+
+  /* ================= wordlists: list + form ================= */
+
+  function renderWordlists() {
+    const d = D();
+    const list = el("wl-list");
+    list.innerHTML = "";
+    el("wl-empty").classList.toggle("hidden", d.wordlists.length > 0);
+
+    // fixed "no wordlist" choice (run the drill from its description alone)
+    const none = document.createElement("div");
+    none.className = "saved-item" + (d.sel.wl === null ? " selected" : "");
+    const noneLbl = document.createElement("div");
+    noneLbl.className = "muted";
+    noneLbl.textContent = I18N.t("drills.wlNone");
+    none.appendChild(noneLbl);
+    none.onclick = () => {
+      d.sel.wl = null;
+      Store.saveProfile();
+      renderAll();
+    };
+    list.appendChild(none);
+
+    for (const wl of d.wordlists) {
+      const row = document.createElement("div");
+      row.className = "saved-item" + (d.sel.wl === wl.id ? " selected" : "");
+      const main = document.createElement("div");
+      main.className = "saved-main";
+      const t = document.createElement("div");
+      t.className = "saved-title";
+      t.textContent = (wl.kind === "dynamic" ? "🌱 " : "📌 ") + wl.name;
+      const m = document.createElement("div");
+      m.className = "muted small";
+      m.textContent =
+        I18N.t(wl.kind === "dynamic" ? "drills.dynamicShort" : "drills.staticShort") +
+        " · " +
+        I18N.t("drills.nWords", { n: wl.words.length });
+      main.append(t, m);
+      const ops = document.createElement("div");
+      ops.className = "row gap";
+      const edit = document.createElement("button");
+      edit.className = "btn small";
+      edit.textContent = "✎";
+      edit.onclick = (e) => {
+        e.stopPropagation();
+        openWlForm(wl.id);
+      };
+      const del = document.createElement("button");
+      del.className = "btn small ghost";
+      del.textContent = "🗑";
+      del.onclick = (e) => {
+        e.stopPropagation();
+        if (!confirm(I18N.t("drills.wlDeleteConfirm", { name: wl.name }))) return;
+        d.wordlists = d.wordlists.filter((x) => x.id !== wl.id);
+        for (const k of Object.keys(d.srs)) if (k.endsWith("::" + wl.id)) delete d.srs[k];
+        if (d.sel.wl === wl.id) d.sel.wl = null;
+        Store.saveProfile();
+        renderAll();
+      };
+      ops.append(edit, del);
+      row.append(main, ops);
+      row.onclick = () => {
+        d.sel.wl = wl.id;
+        Store.saveProfile();
+        renderAll();
+      };
+      list.appendChild(row);
+    }
+  }
+
+  function wlKind() {
+    const r = document.querySelector('input[name="wl-kind"]:checked');
+    return r ? r.value : "static";
+  }
+
+  function wlSrc() {
+    const r = document.querySelector('input[name="wl-src"]:checked');
+    return r ? r.value : "hand";
+  }
+
+  /** Show/hide the wordlist form's sub-sections for the current kind/source. */
+  function updateWlFormVis() {
+    const creating = editingWl === null;
+    const dynamic = wlKind() === "dynamic";
+    el("wl-src-row").classList.toggle("hidden", dynamic || !creating);
+    el("wl-upload-row").classList.toggle("hidden", dynamic || !creating || wlSrc() !== "upload");
+    const aiVisible = dynamic || (creating && wlSrc() === "ai");
+    el("wl-ai-row").classList.toggle("hidden", !aiVisible);
+    el("wl-batch-wrap").classList.toggle("hidden", !dynamic);
+    // when editing, the list already has words: hide the initial-generation controls
+    el("wl-count-wrap").classList.toggle("hidden", !creating);
+    el("wl-gen").classList.toggle("hidden", !creating);
+    el("wl-count-label").textContent = I18N.t(dynamic ? "drills.wlInitCount" : "drills.wlCount");
+  }
+
+  function openWlForm(id) {
+    editingWl = id ?? null;
+    const wl = id ? D().wordlists.find((x) => x.id === id) : null;
+    el("wl-form-heading").textContent = I18N.t(wl ? "drills.wlFormEdit" : "drills.wlFormNew");
+    el("wl-name").value = wl ? wl.name : "";
+    el("wl-words").value = wl ? wl.words.join("\n") : "";
+    el("wl-prompt").value = wl ? wl.prompt || "" : "";
+    el("wl-batch").value = wl ? wl.batch || 10 : 10;
+    el("wl-count").value = 30;
+    el("wl-file").value = "";
+    const kind = wl ? wl.kind : "static";
+    document.querySelectorAll('input[name="wl-kind"]').forEach((r) => (r.checked = r.value === kind));
+    document.querySelectorAll('input[name="wl-src"]').forEach((r) => (r.checked = r.value === "hand"));
+    el("wl-save-new").classList.toggle("hidden", !wl);
+    updateWlFormVis();
+    el("wl-form").classList.remove("hidden");
+    el("wl-form").scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function closeWlForm() {
+    editingWl = undefined;
+    el("wl-form").classList.add("hidden");
+  }
+
+  /** Parse pasted/uploaded text into a deduplicated word array. Multi-line
+   *  input: one word per line (anything after , ; tab or = is dropped — so
+   *  "word = translation" files work). Single-line input: comma-separated. */
+  function parseWords(text) {
+    const lines = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    let toks;
+    if (lines.length > 1) toks = lines.map((l) => l.split(/[,;\t=]/)[0].trim());
+    else toks = (lines[0] || "").split(/[,;\t]/).map((s) => s.trim());
+    const seen = new Set();
+    const out = [];
+    for (const w of toks) {
+      const k = w.toLowerCase();
+      if (w && !seen.has(k)) {
+        seen.add(k);
+        out.push(w);
+      }
+    }
+    return out;
+  }
+
+  function saveWlForm(asNew) {
+    const d = D();
+    const name = el("wl-name").value.trim();
+    if (!name) return App.toast(I18N.t("drills.wlNeedName"));
+    const kind = wlKind();
+    const words = parseWords(el("wl-words").value);
+    if (!words.length) return App.toast(I18N.t("drills.wlNeedWords"));
+    const prompt = el("wl-prompt").value.trim();
+    if (kind === "dynamic" && !prompt) return App.toast(I18N.t("drills.wlDynNeedPrompt"));
+    let batch = parseInt(el("wl-batch").value, 10);
+    if (!Number.isFinite(batch) || batch < 1) batch = 10;
+    if (batch > 100) batch = 100;
+
+    if (editingWl && !asNew) {
+      const wl = d.wordlists.find((x) => x.id === editingWl);
+      if (wl) Object.assign(wl, { name, kind, words, prompt, batch });
+      d.sel.wl = editingWl;
+    } else {
+      const wl = { id: uid(), name, kind, words, prompt, batch };
+      d.wordlists.push(wl);
+      d.sel.wl = wl.id;
+    }
+    Store.saveProfile();
+    closeWlForm();
+    renderAll();
+    App.toast(I18N.t("drills.wlSavedToast"));
+  }
+
+  /** AI-generate words from the form's prompt into the review textarea. */
+  async function genWlWords() {
+    const prompt = el("wl-prompt").value.trim();
+    if (!prompt) return App.toast(I18N.t("drills.wlNeedPrompt"));
+    let count = parseInt(el("wl-count").value, 10);
+    if (!Number.isFinite(count) || count < 1) count = 1;
+    if (count > 500) count = 500;
+    App.busy(I18N.t("drills.wlGenerating"));
+    try {
+      const words = await generateWords(prompt, count, []);
+      el("wl-words").value = words.join("\n");
+    } catch (e) {
+      App.toast(e.message);
+    } finally {
+      App.busy(false);
+    }
+  }
+
+  /** One AI call producing `count` words for `prompt`, none of them in `exclude`. */
+  async function generateWords(prompt, count, exclude) {
+    const lang = Store.app.language.name;
+    const out = await AI.call({
+      system: `You create vocabulary lists in ${lang} for a language learner (native language English).`,
+      user:
+        `Create exactly ${count} ${lang} words or short expressions matching this request: "${prompt}"\n` +
+        `Give each in its normal dictionary form, one entry per item, no translations, no numbering, no duplicates.` +
+        (exclude.length
+          ? `\nThe list must NOT contain any of these (they are already in the wordlist): ${exclude.join(", ")}`
+          : ""),
+      schema: {
+        type: "object",
+        properties: { words: { type: "array", items: { type: "string" } } },
+        required: ["words"],
+        additionalProperties: false,
+      },
+      maxTokens: Math.min(16000, 500 + count * 25),
+    });
+    const seen = new Set(exclude.map((w) => w.toLowerCase()));
+    const words = [];
+    for (const w of out.words || []) {
+      const t = w.trim();
+      if (t && !seen.has(t.toLowerCase())) {
+        seen.add(t.toLowerCase());
+        words.push(t);
+      }
+    }
+    if (!words.length) throw new Error("The AI returned no words — try rephrasing the prompt.");
+    return words.slice(0, count);
+  }
+
+  function handleWlFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const words = parseWords(String(reader.result || ""));
+      el("wl-words").value = words.join("\n");
+      if (!el("wl-name").value.trim()) el("wl-name").value = file.name.replace(/\.[^.]*$/, "");
+    };
+    reader.readAsText(file);
+  }
+
+  /* ================= spaced repetition ================= */
+
+  function pairKey(drillId, wlId) {
+    return drillId + "::" + wlId;
+  }
+
+  function getPair(drillId, wlId) {
+    const srs = D().srs;
+    const k = pairKey(drillId, wlId);
+    if (!srs[k]) srs[k] = { completed: 0, words: {} };
+    return srs[k];
+  }
+
+  /** How urgently a word needs to be drilled (see file header). */
+  function need(pair, word) {
+    const st = pair.words[word];
+    if (!st) return 0.9; // never seen: high, but a fresh miss ranks higher
+    const since = pair.completed - st.last;
+    return 1 - st.s + 0.25 * Math.min(1, since / 6);
+  }
+
+  /** Pick n words for the next set: highest need first (a little jitter to
+   *  vary ties), recently-missed words may appear twice, short lists cycle.
+   *  Returned in random order. */
+  function selectWords(pair, allWords, n) {
+    const scored = allWords.map((w) => {
+      const raw = need(pair, w);
+      return { w, raw, jittered: raw + Math.random() * 0.08 };
+    });
+    scored.sort((a, b) => b.jittered - a.jittered);
+    let sel = scored.slice(0, n).map((x) => x.w);
+    if (sel.length < n) {
+      // fewer words than exercises: cycle through, worst-known first
+      let i = 0;
+      while (sel.length < n) sel.push(scored[i++ % scored.length].w);
+    } else {
+      // a word the learner recently missed badly (seen, high need) earns a
+      // second slot in the set, displacing the least-needed picks
+      const dups = scored
+        .filter((x) => pair.words[x.w] && x.raw >= 0.95)
+        .slice(0, Math.floor(n / 5))
+        .map((x) => x.w);
+      if (dups.length) sel.splice(n - dups.length, dups.length, ...dups);
+    }
+    return shuffle(sel);
+  }
+
+  function learnedCount(pair, words) {
+    return words.filter((w) => (pair.words[w]?.s ?? 0) >= LEARNED_AT).length;
+  }
+
+  /** After a completed set: EMA-update each drilled word, bump the pair's
+   *  drill counter, and mark when each word was last seen. */
+  function updateSrs(pair, words, scores) {
+    words.forEach((w, i) => {
+      if (scores[i] == null) return;
+      const q = scores[i] / 100;
+      const st = pair.words[w] || (pair.words[w] = { s: S_INIT, last: 0, n: 0 });
+      st.s = Math.round((st.s + EMA_ALPHA * (q - st.s)) * 1000) / 1000;
+      st.n++;
+    });
+    pair.completed++;
+    for (const w of new Set(words)) {
+      if (pair.words[w]) pair.words[w].last = pair.completed;
+    }
+    Store.saveProfile();
+  }
+
+  /** Dynamic wordlists grow when enough of the list is learned (per pair). */
+  async function maybeGrowWordlist(wl, pair) {
+    if (wl.kind !== "dynamic" || !wl.prompt) return;
+    if (learnedCount(pair, wl.words) / wl.words.length < GROW_AT) return;
+    App.busy(I18N.t("drills.wlGrowing"));
+    try {
+      const fresh = await generateWords(wl.prompt, wl.batch || 10, wl.words);
+      wl.words.push(...fresh);
+      Store.saveProfile();
+      renderWordlists();
+      renderRun();
+      App.toast(I18N.t("drills.wlGrew", { n: fresh.length, name: wl.name }));
+    } catch (e) {
+      App.toast(e.message);
+    } finally {
+      App.busy(false);
+    }
+  }
+
+  /* ================= run: generate + do a set ================= */
+
+  function selectedDrill() {
+    const d = D();
+    return d.saved.find((x) => x.id === d.sel.drill) || null;
+  }
+
+  function selectedWl() {
+    const d = D();
+    return d.sel.wl ? d.wordlists.find((x) => x.id === d.sel.wl) || null : null;
+  }
+
+  function renderRun() {
+    const info = el("dr-run-info");
+    info.innerHTML = "";
+    const drill = selectedDrill();
+    el("dr-generate").disabled = !drill;
+    if (!drill) {
+      info.textContent = I18N.t("drills.runNoDrill");
+      return;
+    }
+    const line1 = document.createElement("div");
+    line1.textContent = I18N.t("drills.runInfo", {
+      title: drill.title,
+      type: typeLabel(drill.type),
+      n: drill.count,
+    });
+    info.appendChild(line1);
+    const wl = selectedWl();
+    if (wl) {
+      const pair = getPair(drill.id, wl.id);
+      const line2 = document.createElement("div");
+      line2.textContent = I18N.t("drills.runInfoWl", {
+        name: wl.name,
+        total: wl.words.length,
+        learned: learnedCount(pair, wl.words),
+        completed: pair.completed,
+      });
+      const line3 = document.createElement("div");
+      line3.textContent = I18N.t("drills.runSrsNote");
+      info.append(line2, line3);
+    }
+  }
+
+  async function generate() {
+    const drill = selectedDrill();
+    if (!drill) return App.toast(I18N.t("drills.runNoDrill"));
+    const lang = Store.app.language.name;
+    const wl = selectedWl();
+
+    let words = null;
+    if (wl) {
+      const pair = getPair(drill.id, wl.id);
+      words = selectWords(pair, wl.words, drill.count);
+    }
+    const count = words ? words.length : drill.count;
 
     stopAll();
     App.busy(I18N.t("drills.generating"));
@@ -58,16 +556,21 @@ const Drills = (() => {
         system:
           `You are an expert ${lang} teacher creating practice exercises for an adult learner whose ` +
           `native language is English. Follow the learner's request closely.`,
-        user: buildPrompt(lang, desc, type, count),
+        user: buildPrompt(lang, drill.desc, drill.type, count, words),
         schema: exerciseSchema(),
         maxTokens: Math.min(32000, 1500 + count * 320),
       });
-      const exercises = (out.exercises || []).slice(0, count);
+      let exercises = (out.exercises || []).slice(0, count);
       if (!exercises.length) throw new Error("The AI returned no exercises — try rephrasing your request.");
+      if (words && exercises.length < words.length) words = words.slice(0, exercises.length);
       current = {
-        desc,
-        type,
+        drillId: drill.id,
+        wlId: wl ? wl.id : null,
+        title: drill.title,
+        type: drill.type,
+        desc: drill.desc,
         lang,
+        words, // null, or words[i] = target word of exercise i
         exercises,
         scores: new Array(exercises.length).fill(null),
         listener: null,
@@ -80,10 +583,19 @@ const Drills = (() => {
     }
   }
 
-  function buildPrompt(lang, desc, type, count) {
-    const common =
+  function buildPrompt(lang, desc, type, count, words) {
+    let common =
       `Create exactly ${count} ${lang} practice exercises.\n` +
       `Learner's request (follow it closely): "${desc}"\n\n`;
+    if (words) {
+      common +=
+        `Each exercise must be built around one TARGET WORD from the numbered list below: ` +
+        `the i-th exercise tests the i-th word (same order, one exercise per word; a repeated ` +
+        `word gets a different exercise each time). The exercise must genuinely test the learner ` +
+        `on that word in the way the request describes.\n` +
+        words.map((w, i) => `${i + 1}. ${w}`).join("\n") +
+        `\n\n`;
+    }
     const rules = {
       multiple_choice:
         `Type: multiple choice.\n` +
@@ -109,7 +621,9 @@ const Drills = (() => {
         `Type: English → spoken ${lang} translation (the learner reads an English sentence and SPEAKS its ${lang} translation).\n` +
         `For each: prompt = the English sentence to translate and say aloud; answer = the ideal ${lang} translation; ` +
         `explanation = one sentence on the key translation points. Leave options = [], answer_index = 0, accept = []. ` +
-        `If the request asks for a story, write a coherent short story in English and use its consecutive sentences as the prompts, in order.`,
+        (words
+          ? `Each English sentence must be chosen so its ${lang} translation requires the exercise's target word.`
+          : `If the request asks for a story, write a coherent short story in English and use its consecutive sentences as the prompts, in order.`),
     };
     return common + rules[type] + `\n\nFill every field; use ""/[]/0 for fields this type does not need.`;
   }
@@ -140,21 +654,21 @@ const Drills = (() => {
     };
   }
 
-  /* ---------------- rendering ---------------- */
+  /* ================= rendering a set ================= */
 
   function render() {
-    document.getElementById("dr-output").classList.remove("hidden");
-    document.getElementById("dr-set-title").textContent = I18N.t("drills.setTitle", {
+    el("dr-output").classList.remove("hidden");
+    el("dr-set-title").textContent = I18N.t("drills.runSet", {
+      title: current.title,
       n: current.exercises.length,
-      type: typeLabel(current.type),
     });
-    const list = document.getElementById("dr-list");
+    const list = el("dr-list");
     list.innerHTML = "";
     current.exercises.forEach((ex, i) => list.appendChild(renderDrill(ex, i)));
-    const summary = document.getElementById("dr-summary");
+    const summary = el("dr-summary");
     summary.className = "feedback hidden";
     summary.textContent = "";
-    document.getElementById("dr-output").scrollIntoView({ behavior: "smooth" });
+    el("dr-output").scrollIntoView({ behavior: "smooth" });
   }
 
   function renderDrill(ex, i) {
@@ -376,11 +890,25 @@ const Drills = (() => {
     Store.updateSkill(TYPE_SKILL[current.type], avg, 0.1);
     App.renderDashboard();
 
-    const summary = document.getElementById("dr-summary");
+    const summary = el("dr-summary");
     summary.classList.remove("hidden");
-    summary.className =
-      "feedback " + (avg >= 70 ? "good" : avg >= 40 ? "meh" : "bad");
+    summary.className = "feedback " + (avg >= 70 ? "good" : avg >= 40 ? "meh" : "bad");
     summary.textContent = I18N.t("drills.complete", { n: scores.length, pct: avg });
+
+    // spaced-repetition bookkeeping (only when a wordlist was used)
+    const wl = current.wlId ? D().wordlists.find((x) => x.id === current.wlId) : null;
+    if (current.words && wl) {
+      const pair = getPair(current.drillId, current.wlId);
+      updateSrs(pair, current.words, scores);
+      summary.textContent +=
+        " " +
+        I18N.t("drills.learnedNow", {
+          learned: learnedCount(pair, wl.words),
+          total: wl.words.length,
+        });
+      renderRun();
+      maybeGrowWordlist(wl, pair); // async; toasts if the list grows
+    }
     summary.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
@@ -395,21 +923,43 @@ const Drills = (() => {
     Speech.stop();
   }
 
+  function renderAll() {
+    renderSavedDrills();
+    renderWordlists();
+    renderRun();
+  }
+
   function refresh() {
     // keep the "English → spoken {lang}" radio label in sync with the language
-    const lbl = document.getElementById("dr-type-translate");
+    const lbl = el("dr-type-translate");
     if (lbl) lbl.textContent = typeLabel("translate_spoken");
+    if (!Store.profile) return;
     // a generated set belongs to one language; drop it on a language switch
     if (current && current.lang !== Store.app.language?.name) {
       current = null;
-      document.getElementById("dr-output").classList.add("hidden");
-      document.getElementById("dr-list").innerHTML = "";
+      el("dr-output").classList.add("hidden");
+      el("dr-list").innerHTML = "";
     }
+    closeDrillForm();
+    closeWlForm();
+    renderAll();
   }
 
   function init() {
-    document.getElementById("dr-generate").onclick = generate;
-    refresh();
+    el("dr-new").onclick = () => openDrillForm(null);
+    el("dr-save").onclick = () => saveDrillForm(false);
+    el("dr-save-new").onclick = () => saveDrillForm(true);
+    el("dr-cancel").onclick = closeDrillForm;
+    el("wl-new").onclick = () => openWlForm(null);
+    el("wl-save").onclick = () => saveWlForm(false);
+    el("wl-save-new").onclick = () => saveWlForm(true);
+    el("wl-cancel").onclick = closeWlForm;
+    el("wl-gen").onclick = genWlWords;
+    el("wl-file").onchange = (e) => handleWlFile(e.target.files[0]);
+    document.querySelectorAll('input[name="wl-kind"], input[name="wl-src"]').forEach((r) => {
+      r.onchange = updateWlFormVis;
+    });
+    el("dr-generate").onclick = generate;
   }
 
   return { init, refresh, stopAll };

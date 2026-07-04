@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <title>LinguaForge — AI Language Learning</title>
-<link rel="stylesheet" href="css/style.css?v=17">
+<link rel="stylesheet" href="css/style.css?v=18">
 </head>
 <body>
 
@@ -241,7 +241,21 @@
 <!-- ======================= DRILLS ======================= -->
 <section id="view-drills" class="view">
   <h2 data-i18n="drills.h2">Custom drills</h2>
+
   <div class="card">
+    <div class="row space-between">
+      <h3 data-i18n="drills.savedTitle">Your drills</h3>
+      <button id="dr-new" class="btn small" data-i18n="drills.new">➕ New drill</button>
+    </div>
+    <div id="dr-saved-list" class="saved-list"></div>
+    <div id="dr-saved-empty" class="muted small" data-i18n="drills.noDrills">No saved drills yet — create one.</div>
+  </div>
+
+  <div class="card hidden" id="dr-form">
+    <h3 id="dr-form-heading"></h3>
+    <label class="block"><span data-i18n="drills.titleLabel">Title</span>
+      <input type="text" id="dr-title" data-i18n-ph="drills.titlePh" placeholder="e.g. Noun genders">
+    </label>
     <label class="block"><span data-i18n="drills.describe">Describe the exercises you want</span>
       <textarea id="dr-desc" rows="4" data-i18n-ph="drills.descPh" placeholder="e.g. Drill me on the genders of common nouns; or: all tenses, moods and persons for 100 verbs; or: make a short story in English, then break it into sentences to translate aloud."></textarea>
     </label>
@@ -257,9 +271,73 @@
       <label class="inline"><span data-i18n="drills.count">Number of exercises</span>
         <input type="number" id="dr-count" min="1" max="100" value="20">
       </label>
+      <button id="dr-save" class="btn primary" data-i18n="drills.save">💾 Save drill</button>
+      <button id="dr-save-new" class="btn hidden" data-i18n="drills.saveAsNew">➕ Save as new drill</button>
+      <button id="dr-cancel" class="btn ghost" data-i18n="drills.cancel">Cancel</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row space-between">
+      <h3 data-i18n="drills.wlTitle">Wordlists</h3>
+      <button id="wl-new" class="btn small" data-i18n="drills.wlNew">➕ New wordlist</button>
+    </div>
+    <div id="wl-list" class="saved-list"></div>
+    <div id="wl-empty" class="muted small" data-i18n="drills.noWl">No wordlists yet — optional; a drill can also run from its description alone.</div>
+  </div>
+
+  <div class="card hidden" id="wl-form">
+    <h3 id="wl-form-heading"></h3>
+    <label class="block"><span data-i18n="drills.wlName">Name</span>
+      <input type="text" id="wl-name" data-i18n-ph="drills.wlNamePh" placeholder="e.g. Common nouns">
+    </label>
+    <div class="drills-types" id="wl-kind-row">
+      <span class="drills-types-label" data-i18n="drills.wlKind">Kind</span>
+      <label><input type="radio" name="wl-kind" value="static" checked> <span data-i18n="drills.wlStatic">Static (fixed list)</span></label>
+      <label><input type="radio" name="wl-kind" value="dynamic"> <span data-i18n="drills.wlDynamic">Dynamic (AI adds new words as you learn)</span></label>
+    </div>
+    <div class="drills-types" id="wl-src-row">
+      <span class="drills-types-label" data-i18n="drills.wlSource">Create it</span>
+      <label><input type="radio" name="wl-src" value="hand" checked> <span data-i18n="drills.wlByHand">By hand</span></label>
+      <label><input type="radio" name="wl-src" value="upload"> <span data-i18n="drills.wlUpload">Upload a file</span></label>
+      <label><input type="radio" name="wl-src" value="ai"> <span data-i18n="drills.wlAi">AI-generate from a prompt</span></label>
+    </div>
+    <div id="wl-upload-row" class="hidden">
+      <input type="file" id="wl-file" accept=".txt,.csv,.tsv,text/plain">
+      <div class="muted small" data-i18n="drills.wlUploadHint">Text file: one word per line (or comma-separated). The words appear below for review.</div>
+    </div>
+    <div id="wl-ai-row" class="hidden">
+      <label class="block"><span data-i18n="drills.wlPrompt">Prompt for the AI</span>
+        <textarea id="wl-prompt" rows="2" data-i18n-ph="drills.wlPromptPh" placeholder="e.g. the most common kitchen and food nouns"></textarea>
+      </label>
+      <div class="row gap wrap" style="align-items:flex-end">
+        <label class="inline" id="wl-count-wrap"><span id="wl-count-label" data-i18n="drills.wlCount">Number of words</span>
+          <input type="number" id="wl-count" min="1" max="500" value="30">
+        </label>
+        <label class="inline hidden" id="wl-batch-wrap"><span data-i18n="drills.wlBatch">Words per new batch</span>
+          <input type="number" id="wl-batch" min="1" max="100" value="10">
+        </label>
+        <button id="wl-gen" class="btn" data-i18n="drills.wlGen">⚡ Generate words</button>
+      </div>
+    </div>
+    <label class="block"><span data-i18n="drills.wlWords">Words (one per line)</span>
+      <textarea id="wl-words" rows="6"></textarea>
+    </label>
+    <div class="row gap wrap">
+      <button id="wl-save" class="btn primary" data-i18n="drills.wlSave">💾 Save wordlist</button>
+      <button id="wl-save-new" class="btn hidden" data-i18n="drills.wlSaveAsNew">➕ Save as new wordlist</button>
+      <button id="wl-cancel" class="btn ghost" data-i18n="drills.cancel">Cancel</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="drills.runTitle">Practice</h3>
+    <div id="dr-run-info" class="muted small"></div>
+    <div class="row gap" style="margin-top:0.5rem">
       <button id="dr-generate" class="btn primary" data-i18n="drills.generate">⚡ Generate exercises</button>
     </div>
   </div>
+
   <div id="dr-output" class="hidden">
     <div class="card">
       <h3 id="dr-set-title"></h3>
@@ -338,16 +416,16 @@
 <div id="toast"></div>
 <div id="busy" class="hidden"><div class="spinner"></div><div id="busy-msg">Thinking…</div></div>
 
-<script src="js/storage.js?v=17"></script>
-<script src="js/ai.js?v=17"></script>
-<script src="js/i18n.js?v=17"></script>
-<script src="js/speech.js?v=17"></script>
-<script src="js/anki.js?v=17"></script>
-<script src="js/vocab.js?v=17"></script>
-<script src="js/listen.js?v=17"></script>
-<script src="js/reading.js?v=17"></script>
-<script src="js/grammar.js?v=17"></script>
-<script src="js/drills.js?v=17"></script>
-<script src="js/app.js?v=17"></script>
+<script src="js/storage.js?v=18"></script>
+<script src="js/ai.js?v=18"></script>
+<script src="js/i18n.js?v=18"></script>
+<script src="js/speech.js?v=18"></script>
+<script src="js/anki.js?v=18"></script>
+<script src="js/vocab.js?v=18"></script>
+<script src="js/listen.js?v=18"></script>
+<script src="js/reading.js?v=18"></script>
+<script src="js/grammar.js?v=18"></script>
+<script src="js/drills.js?v=18"></script>
+<script src="js/app.js?v=18"></script>
 </body>
 </html>
