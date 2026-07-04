@@ -149,8 +149,10 @@ const Drills = (() => {
     el("dr-title").value = drill ? drill.title : "";
     el("dr-desc").value = drill ? drill.desc : "";
     el("dr-count").value = drill ? drill.count : 20;
+    el("dr-choices").value = drill ? drill.choices || 4 : 4;
     const type = drill ? drill.type : "multiple_choice";
     document.querySelectorAll('input[name="dr-type"]').forEach((r) => (r.checked = r.value === type));
+    updateChoicesVis();
     el("dr-save-new").classList.toggle("hidden", !drill);
     el("dr-form").classList.remove("hidden");
     el("dr-form").scrollIntoView({ behavior: "smooth", block: "center" });
@@ -159,6 +161,12 @@ const Drills = (() => {
   function closeDrillForm() {
     editingDrill = undefined;
     el("dr-form").classList.add("hidden");
+  }
+
+  /** The choices count only applies to multiple-choice drills. */
+  function updateChoicesVis() {
+    const r = document.querySelector('input[name="dr-type"]:checked');
+    el("dr-choices-wrap").classList.toggle("hidden", !r || r.value !== "multiple_choice");
   }
 
   function saveDrillForm(asNew) {
@@ -171,13 +179,16 @@ const Drills = (() => {
     let count = parseInt(el("dr-count").value, 10);
     if (!Number.isFinite(count) || count < 1) count = 1;
     if (count > 100) count = 100;
+    let choices = parseInt(el("dr-choices").value, 10);
+    if (!Number.isFinite(choices) || choices < 2) choices = 2;
+    if (choices > 8) choices = 8;
 
     if (editingDrill && !asNew) {
       const drill = d.saved.find((x) => x.id === editingDrill);
-      if (drill) Object.assign(drill, { title, desc, type, count });
+      if (drill) Object.assign(drill, { title, desc, type, count, choices });
       d.sel.drill = editingDrill;
     } else {
-      const drill = { id: uid(), title, desc, type, count };
+      const drill = { id: uid(), title, desc, type, count, choices };
       d.saved.push(drill);
       d.sel.drill = drill.id;
     }
@@ -605,7 +616,7 @@ const Drills = (() => {
         system:
           `You are an expert ${lang} teacher creating practice exercises for an adult learner whose ` +
           `native language is English. Follow the learner's request closely.`,
-        user: buildPrompt(lang, drill.desc, drill.type, count, words),
+        user: buildPrompt(lang, drill.desc, drill.type, count, words, drill.choices || 4),
         schema: exerciseSchema(),
         maxTokens: Math.min(32000, 1500 + count * 320),
       });
@@ -632,7 +643,7 @@ const Drills = (() => {
     }
   }
 
-  function buildPrompt(lang, desc, type, count, words) {
+  function buildPrompt(lang, desc, type, count, words, choices) {
     let common =
       `Create exactly ${count} ${lang} practice exercises.\n` +
       `Learner's request (follow it closely): "${desc}"\n\n`;
@@ -649,9 +660,9 @@ const Drills = (() => {
       multiple_choice:
         `Type: multiple choice.\n` +
         `For each exercise set: prompt = the question (in English, may quote ${lang}); ` +
-        `options = exactly 4 answer choices; answer_index = the 0-based index of the correct option; ` +
-        `answer = the text of the correct option; explanation = one sentence on why it's correct. ` +
-        `Leave accept = [].`,
+        `options = exactly ${choices} answer choices; answer_index = the 0-based index (0-${choices - 1}) ` +
+        `of the correct option; answer = the text of the correct option; explanation = one sentence on ` +
+        `why it's correct. Leave accept = [].`,
       short_written:
         `Type: short written answer (the answer is a single word or a very short phrase in ${lang}).\n` +
         `For each: prompt = a clear instruction or question (in English, may quote ${lang}) whose answer is ` +
@@ -997,6 +1008,7 @@ const Drills = (() => {
 
   function init() {
     el("dr-new").onclick = () => openDrillForm(null);
+    document.querySelectorAll('input[name="dr-type"]').forEach((r) => (r.onchange = updateChoicesVis));
     el("dr-save").onclick = () => saveDrillForm(false);
     el("dr-save-new").onclick = () => saveDrillForm(true);
     el("dr-cancel").onclick = closeDrillForm;
