@@ -79,8 +79,10 @@ js/drills.js      Drills: saved drill definitions (title/description/type/count,
                   wordlists (static: hand/upload/AI-generated; dynamic: AI-grown
                   in batches as words are learned); spaced repetition tracked
                   per (drill, wordlist) pair (see file header for the exact
-                  algorithm: EMA word strength, learned at s≥0.8, dynamic lists
-                  grow at 75% learned); per-exercise grading (local for
+                  algorithm: EMA word strength, learned at s≥0.8; each pair has
+                  its own window into a dynamic list — 75% learned extends it by
+                  a batch, unlocking existing words before generating new ones);
+                  per-exercise grading (local for
                   MC/short, AI for long written + all spoken) plus a total score.
 js/app.js         App: navigation, session (user+language), Settings/profile
                   modals, dashboard, toast/busy helpers, init.

@@ -12,13 +12,22 @@
  *
  * SPACED REPETITION is tracked per (drill, wordlist) PAIR — the same word in
  * two drills (e.g. noun meaning vs noun gender) has independent records:
- *   srs["drillId::wlId"] = { completed, words: { word: {s, last, n} } }
+ *   srs["drillId::wlId"] = { completed, limit, words: { word: {s, last, n} } }
  *   - s     estimated probability (0-1) the learner answers this word right,
  *           updated after each drill by an EMA: s += 0.4*(score/100 - s),
  *           starting from 0.2 the first time a word appears. A word counts
  *           as LEARNED when s ≥ 0.8 (≈ three good answers in a row).
  *   - last  value of `completed` when the word last appeared (drill counts,
  *           not wall-clock time); n = times drilled.
+ *   - limit (dynamic wordlists only) each pair's WINDOW into the wordlist:
+ *           the words of a dynamic list are kept in generation order, and a
+ *           pair is only drilled on the first `limit` of them, starting at
+ *           the list's initial size. Learning 75% of the window extends it
+ *           by `batch` — first unlocking words another drill's practice
+ *           already generated, and only generating new words when the window
+ *           passes the end of the list. So a list grown to 75 by a "meaning"
+ *           drill still tests a fresh "gender" drill on the original 50
+ *           until those genders are learned.
  * Selection of N exercise words: need = (1 - s) + 0.25·min(1, since/6) for
  * seen words (recent misses dominate; long-unseen adds a bonus), 0.9 for
  * never-seen words. Top N by need (with a little jitter); words that were
@@ -331,10 +340,15 @@ const Drills = (() => {
 
     if (editingWl && !asNew) {
       const wl = d.wordlists.find((x) => x.id === editingWl);
-      if (wl) Object.assign(wl, { name, kind, words, prompt, batch });
+      if (wl) {
+        Object.assign(wl, { name, kind, words, prompt, batch });
+        if (wl.initial == null) wl.initial = words.length; // pre-window profiles
+      }
       d.sel.wl = editingWl;
     } else {
-      const wl = { id: uid(), name, kind, words, prompt, batch };
+      // `initial` fixes the starting window every (drill, wordlist) pair gets
+      // into a dynamic list, even after other drills have grown it
+      const wl = { id: uid(), name, kind, words, prompt, batch, initial: words.length };
       d.wordlists.push(wl);
       d.sel.wl = wl.id;
     }
@@ -418,6 +432,23 @@ const Drills = (() => {
     return srs[k];
   }
 
+  /** The pair for (drill, wordlist), with its window initialized/clamped for
+   *  dynamic lists: a new pair starts at the list's initial size, not its
+   *  current (possibly already-grown) size. */
+  function pairFor(drillId, wl) {
+    const pair = getPair(drillId, wl.id);
+    if (wl.kind === "dynamic") {
+      if (pair.limit == null) pair.limit = Math.min(wl.initial ?? wl.words.length, wl.words.length);
+      if (pair.limit > wl.words.length) pair.limit = wl.words.length; // words were hand-removed
+    }
+    return pair;
+  }
+
+  /** The words this pair is currently drilled on (a dynamic list's window). */
+  function activeWords(wl, pair) {
+    return wl.kind === "dynamic" && pair.limit != null ? wl.words.slice(0, pair.limit) : wl.words;
+  }
+
   /** How urgently a word needs to be drilled (see file header). */
   function need(pair, word) {
     const st = pair.words[word];
@@ -473,22 +504,39 @@ const Drills = (() => {
     Store.saveProfile();
   }
 
-  /** Dynamic wordlists grow when enough of the list is learned (per pair). */
+  /** When ≥75% of this pair's window is learned, extend the window by a
+   *  batch. Words another pair's practice already generated are unlocked
+   *  first; new words are AI-generated only when the window passes the end
+   *  of the list (and they're appended for every pair to reach later). */
   async function maybeGrowWordlist(wl, pair) {
     if (wl.kind !== "dynamic" || !wl.prompt) return;
-    if (learnedCount(pair, wl.words) / wl.words.length < GROW_AT) return;
-    App.busy(I18N.t("drills.wlGrowing"));
-    try {
-      const fresh = await generateWords(wl.prompt, wl.batch || 10, wl.words);
-      wl.words.push(...fresh);
-      Store.saveProfile();
-      renderWordlists();
-      renderRun();
-      App.toast(I18N.t("drills.wlGrew", { n: fresh.length, name: wl.name }));
-    } catch (e) {
-      App.toast(e.message);
-    } finally {
-      App.busy(false);
+    const active = activeWords(wl, pair);
+    if (!active.length || learnedCount(pair, active) / active.length < GROW_AT) return;
+    const oldLimit = pair.limit;
+    const newLimit = oldLimit + (wl.batch || 10);
+    const missing = newLimit - wl.words.length;
+    if (missing > 0) {
+      App.busy(I18N.t("drills.wlGrowing"));
+      try {
+        const fresh = await generateWords(wl.prompt, missing, wl.words);
+        wl.words.push(...fresh);
+      } catch (e) {
+        App.toast(e.message);
+      } finally {
+        App.busy(false);
+      }
+    }
+    pair.limit = Math.min(newLimit, wl.words.length);
+    Store.saveProfile();
+    renderWordlists();
+    renderRun();
+    const unlocked = pair.limit - oldLimit;
+    if (unlocked > 0) {
+      App.toast(
+        missing > 0
+          ? I18N.t("drills.wlGrew", { n: unlocked, name: wl.name })
+          : I18N.t("drills.wlUnlocked", { n: unlocked, name: wl.name })
+      );
     }
   }
 
@@ -522,12 +570,13 @@ const Drills = (() => {
     info.appendChild(line1);
     const wl = selectedWl();
     if (wl) {
-      const pair = getPair(drill.id, wl.id);
+      const pair = pairFor(drill.id, wl);
+      const active = activeWords(wl, pair);
       const line2 = document.createElement("div");
       line2.textContent = I18N.t("drills.runInfoWl", {
         name: wl.name,
-        total: wl.words.length,
-        learned: learnedCount(pair, wl.words),
+        total: active.length,
+        learned: learnedCount(pair, active),
         completed: pair.completed,
       });
       const line3 = document.createElement("div");
@@ -544,8 +593,8 @@ const Drills = (() => {
 
     let words = null;
     if (wl) {
-      const pair = getPair(drill.id, wl.id);
-      words = selectWords(pair, wl.words, drill.count);
+      const pair = pairFor(drill.id, wl);
+      words = selectWords(pair, activeWords(wl, pair), drill.count);
     }
     const count = words ? words.length : drill.count;
 
@@ -898,13 +947,14 @@ const Drills = (() => {
     // spaced-repetition bookkeeping (only when a wordlist was used)
     const wl = current.wlId ? D().wordlists.find((x) => x.id === current.wlId) : null;
     if (current.words && wl) {
-      const pair = getPair(current.drillId, current.wlId);
+      const pair = pairFor(current.drillId, wl);
       updateSrs(pair, current.words, scores);
+      const active = activeWords(wl, pair);
       summary.textContent +=
         " " +
         I18N.t("drills.learnedNow", {
-          learned: learnedCount(pair, wl.words),
-          total: wl.words.length,
+          learned: learnedCount(pair, active),
+          total: active.length,
         });
       renderRun();
       maybeGrowWordlist(wl, pair); // async; toasts if the list grows

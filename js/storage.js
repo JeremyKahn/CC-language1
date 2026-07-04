@@ -67,9 +67,10 @@ const Store = (() => {
       grammar: { curriculum: [], current: 0, progress: {} }, // progress[idx] = {taught, score, done}
       reading: { sessions: 0 },
       // drills: saved drill definitions, wordlists, and spaced-repetition state.
-      // srs["<drillId>::<wordlistId>"] = { completed, words: { word: {s, last, n} } }
+      // srs["<drillId>::<wordlistId>"] = { completed, limit, words: { word: {s, last, n} } }
       // — learning is tracked per (drill, wordlist) PAIR: the same word in two
-      // different drills has two independent records.
+      // different drills has two independent records, and each pair has its own
+      // window (`limit`) into a dynamic wordlist's generation-ordered words.
       drills: { saved: [], wordlists: [], srs: {}, sel: { drill: null, wl: null } },
     };
   }
