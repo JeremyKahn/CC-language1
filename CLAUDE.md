@@ -77,9 +77,13 @@ js/drills.js      Drills: saved drill definitions (title/description/type/count,
                   5 types: multiple choice, short/long written, spoken,
                   English→spoken translation) with edit/overwrite/save-as-new;
                   wordlists (static: hand/upload/AI-generated; dynamic: AI-grown
-                  in batches as words are learned); spaced repetition tracked
+                  in batches as words are learned; built-in: frequency-ranked
+                  dict-<iso>/ files — French NOM/ADJ/ADV/VER — auto-shown for
+                  that language, fetched+cached per session, growth only
+                  unlocks the next file words); spaced repetition tracked
                   per (drill, wordlist) pair (see file header for the exact
-                  algorithm: EMA word strength, learned at s≥0.8; each pair has
+                  algorithm: EMA word strength, learned at s≥0.8, new words
+                  start at half the pair's average correctness; each pair has
                   its own window into a dynamic list — 75% learned extends it by
                   a batch, unlocking existing words before generating new ones);
                   per-exercise grading (local for

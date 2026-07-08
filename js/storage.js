@@ -71,7 +71,8 @@ const Store = (() => {
       // — learning is tracked per (drill, wordlist) PAIR: the same word in two
       // different drills has two independent records, and each pair has its own
       // window (`limit`) into a dynamic wordlist's generation-ordered words.
-      drills: { saved: [], wordlists: [], srs: {}, sel: { drill: null, wl: null } },
+      // biCfg["<builtinId>"] = {batch} — growth rate of built-in wordlists
+      drills: { saved: [], wordlists: [], srs: {}, sel: { drill: null, wl: null }, biCfg: {} },
     };
   }
 

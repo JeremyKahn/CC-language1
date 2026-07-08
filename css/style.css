@@ -219,6 +219,8 @@ input[type="text"], input[type="password"], textarea, select {
 .saved-item.selected { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); background: var(--bg); }
 .saved-item .saved-title { font-weight: bold; }
 .saved-item .saved-main { min-width: 0; }
+.saved-item .bi-batch { display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+.saved-item .bi-batch input { width: 3.6rem; }
 
 /* modal */
 #modal-backdrop {

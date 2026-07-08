@@ -9,14 +9,27 @@
  * Dynamic lists are AI-generated and GROW: when the learner has learned ≥75%
  * of the list's words (for the drill being practised), a new batch of `batch`
  * words — different from all existing ones — is generated and appended.
+ * BUILT-IN wordlists (kind "builtin") are frequency-ranked lemma files
+ * shipped with the app (dict-<iso>/<POS>.txt — currently French only) that
+ * appear automatically for that language. They behave like dynamic lists —
+ * per-pair windows starting small and growing by a per-list, user-adjustable
+ * batch — except growth only UNLOCKS the next words of the file (in frequency
+ * order); nothing is ever AI-generated. Words are fetched once per session
+ * and cached in memory, not in the profile; only the per-list batch size
+ * (drills.biCfg) and the per-pair SRS state are persisted.
  *
  * SPACED REPETITION is tracked per (drill, wordlist) PAIR — the same word in
  * two drills (e.g. noun meaning vs noun gender) has independent records:
- *   srs["drillId::wlId"] = { completed, limit, words: { word: {s, last, n} } }
+ *   srs["drillId::wlId"] = { completed, limit, qSum, qN,
+ *                            words: { word: {s, last, n} } }
  *   - s     estimated probability (0-1) the learner answers this word right,
- *           updated after each drill by an EMA: s += 0.4*(score/100 - s),
- *           starting from 0.2 the first time a word appears. A word counts
- *           as LEARNED when s ≥ 0.8 (≈ three good answers in a row).
+ *           updated after each drill by an EMA: s += 0.4*(score/100 - s).
+ *           A word counts as LEARNED when s ≥ 0.8.
+ *   - qSum/qN  running sum & count of score fractions over every exercise
+ *           ever done in this pair. A word's FIRST record starts at
+ *           s = (qSum/qN)/2 — half the pair's average correctness — so easy
+ *           drills (everything right → start 0.5) converge in ~2 sets while
+ *           hard ones (start low) still take time; 0.2 before any history.
  *   - last  value of `completed` when the word last appeared (drill counts,
  *           not wall-clock time); n = times drilled.
  *   - limit (dynamic wordlists only) each pair's WINDOW into the wordlist:
@@ -43,7 +56,20 @@ const Drills = (() => {
   const LEARNED_AT = 0.8; // s ≥ this → word is "learned"
   const GROW_AT = 0.75; // share of a dynamic list learned → add a new batch
   const EMA_ALPHA = 0.4;
-  const S_INIT = 0.2;
+  const S_INIT = 0.2; // first-word strength before the pair has any history
+  const BI_INITIAL = 20; // starting window into a built-in wordlist
+  const BI_BATCH = 10; // default growth batch for built-in lists
+
+  // Built-in frequency-ranked wordlists shipped with the app, per ISO code.
+  // Files live in dict-<iso>/<key>.txt, one lemma per line, most frequent first.
+  const BUILTIN_WL = {
+    fr: [
+      { key: "NOM", nameKey: "drills.biNouns" },
+      { key: "ADJ", nameKey: "drills.biAdjectives" },
+      { key: "ADV", nameKey: "drills.biAdverbs" },
+      { key: "VER", nameKey: "drills.biVerbs" },
+    ],
+  };
 
   const TYPE_KEY = {
     multiple_choice: "drills.typeMc",
@@ -72,6 +98,7 @@ const Drills = (() => {
       p.drills = { saved: [], wordlists: [], srs: {}, sel: { drill: null, wl: null } };
     }
     if (!p.drills.sel) p.drills.sel = { drill: null, wl: null };
+    if (!p.drills.biCfg) p.drills.biCfg = {}; // per built-in list: {batch}
     return p.drills;
   }
 
@@ -89,6 +116,65 @@ const Drills = (() => {
       [a[i], a[j]] = [a[j], a[i]];
     }
     return a;
+  }
+
+  /* ================= built-in wordlists ================= */
+
+  const biCache = {}; // id → words[] (session-only; too big for localStorage)
+  const biPending = {}; // id → in-flight fetch promise
+  const biError = {}; // id → error message (fetch failed)
+
+  /** Built-in list descriptors for the current language ([] elsewhere). */
+  function builtinDefs() {
+    const iso = (Store.app.language?.bcp || "").slice(0, 2).toLowerCase();
+    return (BUILTIN_WL[iso] || []).map((d) => ({
+      ...d,
+      id: `bi-${iso}-${d.key}`,
+      file: `dict-${iso}/${d.key}.txt`,
+    }));
+  }
+
+  function isBuiltinId(id) {
+    return typeof id === "string" && id.startsWith("bi-");
+  }
+
+  /** Materialize a built-in list as a wordlist-shaped object. `words` is the
+   *  session cache ([] until loaded); batch comes from the profile's biCfg. */
+  function builtinWl(def) {
+    const cfg = D().biCfg[def.id] || {};
+    return {
+      id: def.id,
+      name: I18N.t(def.nameKey),
+      kind: "builtin",
+      words: biCache[def.id] || [],
+      batch: cfg.batch || BI_BATCH,
+      initial: BI_INITIAL,
+    };
+  }
+
+  /** Fetch + cache a built-in list (deduplicates concurrent calls). */
+  function loadBuiltin(def) {
+    if (biCache[def.id]) return Promise.resolve(biCache[def.id]);
+    if (!biPending[def.id]) {
+      biPending[def.id] = fetch(def.file)
+        .then((r) => {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.text();
+        })
+        .then((text) => {
+          delete biError[def.id];
+          biCache[def.id] = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+          return biCache[def.id];
+        })
+        .catch((e) => {
+          biError[def.id] = e.message;
+          throw e;
+        })
+        .finally(() => {
+          delete biPending[def.id];
+        });
+    }
+    return biPending[def.id];
   }
 
   /* ================= drills: list + form ================= */
@@ -219,6 +305,63 @@ const Drills = (() => {
       renderAll();
     };
     list.appendChild(none);
+
+    // built-in frequency lists for the current language (French for now)
+    for (const def of builtinDefs()) {
+      const wl = builtinWl(def);
+      const loaded = wl.words.length > 0;
+      if (!loaded && !biError[def.id] && !biPending[def.id]) {
+        loadBuiltin(def).then(renderAll).catch(() => renderAll()); // row updates when ready
+      }
+      const row = document.createElement("div");
+      row.className = "saved-item" + (d.sel.wl === def.id ? " selected" : "");
+      const main = document.createElement("div");
+      main.className = "saved-main";
+      const t = document.createElement("div");
+      t.className = "saved-title";
+      t.textContent = "📖 " + wl.name;
+      const m = document.createElement("div");
+      m.className = "muted small";
+      m.textContent =
+        I18N.t("drills.builtinShort") +
+        " · " +
+        (biError[def.id]
+          ? "⚠ " + I18N.t("drills.biUnavail")
+          : loaded
+            ? I18N.t("drills.nWords", { n: wl.words.length })
+            : I18N.t("drills.biLoading"));
+      main.append(t, m);
+      // growth rate is the one thing the user can adjust on a built-in list
+      const batchWrap = document.createElement("label");
+      batchWrap.className = "bi-batch muted small";
+      const bLbl = document.createElement("span");
+      bLbl.textContent = I18N.t("drills.biBatchLbl");
+      const bIn = document.createElement("input");
+      bIn.type = "number";
+      bIn.min = 1;
+      bIn.max = 100;
+      bIn.value = wl.batch;
+      bIn.onclick = (e) => e.stopPropagation();
+      bIn.onchange = () => {
+        let b = parseInt(bIn.value, 10);
+        if (!Number.isFinite(b) || b < 1) b = 1;
+        if (b > 100) b = 100;
+        bIn.value = b;
+        D().biCfg[def.id] = { batch: b };
+        Store.saveProfile();
+        renderRun();
+      };
+      batchWrap.onclick = (e) => e.stopPropagation();
+      batchWrap.append(bLbl, bIn);
+      row.append(main, batchWrap);
+      row.onclick = () => {
+        if (biError[def.id]) return App.toast(I18N.t("drills.biLoadFail", { msg: biError[def.id] }));
+        d.sel.wl = def.id;
+        Store.saveProfile();
+        renderAll();
+      };
+      list.appendChild(row);
+    }
 
     for (const wl of d.wordlists) {
       const row = document.createElement("div");
@@ -443,21 +586,25 @@ const Drills = (() => {
     return srs[k];
   }
 
+  function windowed(wl) {
+    return wl.kind === "dynamic" || wl.kind === "builtin";
+  }
+
   /** The pair for (drill, wordlist), with its window initialized/clamped for
-   *  dynamic lists: a new pair starts at the list's initial size, not its
-   *  current (possibly already-grown) size. */
+   *  dynamic/built-in lists: a new pair starts at the list's initial size,
+   *  not its current (possibly already-grown) size. */
   function pairFor(drillId, wl) {
     const pair = getPair(drillId, wl.id);
-    if (wl.kind === "dynamic") {
+    if (windowed(wl) && wl.words.length) {
       if (pair.limit == null) pair.limit = Math.min(wl.initial ?? wl.words.length, wl.words.length);
       if (pair.limit > wl.words.length) pair.limit = wl.words.length; // words were hand-removed
     }
     return pair;
   }
 
-  /** The words this pair is currently drilled on (a dynamic list's window). */
+  /** The words this pair is currently drilled on (a windowed list's window). */
   function activeWords(wl, pair) {
-    return wl.kind === "dynamic" && pair.limit != null ? wl.words.slice(0, pair.limit) : wl.words;
+    return windowed(wl) && pair.limit != null ? wl.words.slice(0, pair.limit) : wl.words;
   }
 
   /** How urgently a word needs to be drilled (see file header). */
@@ -498,16 +645,33 @@ const Drills = (() => {
     return words.filter((w) => (pair.words[w]?.s ?? 0) >= LEARNED_AT).length;
   }
 
-  /** After a completed set: EMA-update each drilled word, bump the pair's
-   *  drill counter, and mark when each word was last seen. */
+  /** A first-seen word's starting strength: half the pair's average
+   *  correctness so far (all right so far → 0.5, so easy drills converge
+   *  fast; struggling → lower, so hard ones get time). S_INIT before any
+   *  history exists. */
+  function initialStrength(pair) {
+    return pair.qN ? Math.round(((pair.qSum / pair.qN) / 2) * 1000) / 1000 : S_INIT;
+  }
+
+  /** After a completed set: EMA-update each drilled word (new words start at
+   *  the pair's adaptive initial strength, computed from the sets BEFORE this
+   *  one), fold this set into the pair's running correctness average, bump
+   *  the drill counter, and mark when each word was last seen. */
   function updateSrs(pair, words, scores) {
+    const s0 = initialStrength(pair);
+    let qSum = 0;
+    let qN = 0;
     words.forEach((w, i) => {
       if (scores[i] == null) return;
       const q = scores[i] / 100;
-      const st = pair.words[w] || (pair.words[w] = { s: S_INIT, last: 0, n: 0 });
+      const st = pair.words[w] || (pair.words[w] = { s: s0, last: 0, n: 0 });
       st.s = Math.round((st.s + EMA_ALPHA * (q - st.s)) * 1000) / 1000;
       st.n++;
+      qSum += q;
+      qN++;
     });
+    pair.qSum = Math.round(((pair.qSum || 0) + qSum) * 1000) / 1000;
+    pair.qN = (pair.qN || 0) + qN;
     pair.completed++;
     for (const w of new Set(words)) {
       if (pair.words[w]) pair.words[w].last = pair.completed;
@@ -516,17 +680,19 @@ const Drills = (() => {
   }
 
   /** When ≥75% of this pair's window is learned, extend the window by a
-   *  batch. Words another pair's practice already generated are unlocked
-   *  first; new words are AI-generated only when the window passes the end
-   *  of the list (and they're appended for every pair to reach later). */
+   *  batch. Words already in the list (generated by another pair, or the
+   *  rest of a built-in file) are unlocked first; new words are AI-generated
+   *  only for dynamic lists, when the window passes the end of the list
+   *  (and they're appended for every pair to reach later). */
   async function maybeGrowWordlist(wl, pair) {
-    if (wl.kind !== "dynamic" || !wl.prompt) return;
+    const growable = wl.kind === "builtin" || (wl.kind === "dynamic" && wl.prompt);
+    if (!growable) return;
     const active = activeWords(wl, pair);
     if (!active.length || learnedCount(pair, active) / active.length < GROW_AT) return;
     const oldLimit = pair.limit;
     const newLimit = oldLimit + (wl.batch || 10);
     const missing = newLimit - wl.words.length;
-    if (missing > 0) {
+    if (missing > 0 && wl.kind === "dynamic") {
       App.busy(I18N.t("drills.wlGrowing"));
       try {
         const fresh = await generateWords(wl.prompt, missing, wl.words);
@@ -544,7 +710,7 @@ const Drills = (() => {
     const unlocked = pair.limit - oldLimit;
     if (unlocked > 0) {
       App.toast(
-        missing > 0
+        missing > 0 && wl.kind === "dynamic"
           ? I18N.t("drills.wlGrew", { n: unlocked, name: wl.name })
           : I18N.t("drills.wlUnlocked", { n: unlocked, name: wl.name })
       );
@@ -558,9 +724,18 @@ const Drills = (() => {
     return d.saved.find((x) => x.id === d.sel.drill) || null;
   }
 
+  /** Resolve a wordlist id — saved or built-in — to a wordlist object. */
+  function wlById(id) {
+    if (!id) return null;
+    if (isBuiltinId(id)) {
+      const def = builtinDefs().find((x) => x.id === id);
+      return def ? builtinWl(def) : null; // null when the language changed
+    }
+    return D().wordlists.find((x) => x.id === id) || null;
+  }
+
   function selectedWl() {
-    const d = D();
-    return d.sel.wl ? d.wordlists.find((x) => x.id === d.sel.wl) || null : null;
+    return wlById(D().sel.wl);
   }
 
   function renderRun() {
@@ -581,15 +756,19 @@ const Drills = (() => {
     info.appendChild(line1);
     const wl = selectedWl();
     if (wl) {
-      const pair = pairFor(drill.id, wl);
-      const active = activeWords(wl, pair);
       const line2 = document.createElement("div");
-      line2.textContent = I18N.t("drills.runInfoWl", {
-        name: wl.name,
-        total: active.length,
-        learned: learnedCount(pair, active),
-        completed: pair.completed,
-      });
+      if (wl.kind === "builtin" && !wl.words.length) {
+        line2.textContent = `${wl.name} — ${I18N.t("drills.biLoading")}`; // renderAll re-runs when loaded
+      } else {
+        const pair = pairFor(drill.id, wl);
+        const active = activeWords(wl, pair);
+        line2.textContent = I18N.t("drills.runInfoWl", {
+          name: wl.name,
+          total: active.length,
+          learned: learnedCount(pair, active),
+          completed: pair.completed,
+        });
+      }
       const line3 = document.createElement("div");
       line3.textContent = I18N.t("drills.runSrsNote");
       info.append(line2, line3);
@@ -601,6 +780,16 @@ const Drills = (() => {
     if (!drill) return App.toast(I18N.t("drills.runNoDrill"));
     const lang = Store.app.language.name;
     const wl = selectedWl();
+
+    // built-in lists load lazily; make sure the words are here before selecting
+    if (wl && wl.kind === "builtin" && !wl.words.length) {
+      const def = builtinDefs().find((x) => x.id === wl.id);
+      try {
+        wl.words = await loadBuiltin(def);
+      } catch (e) {
+        return App.toast(I18N.t("drills.biLoadFail", { msg: e.message }));
+      }
+    }
 
     let words = null;
     if (wl) {
@@ -956,7 +1145,7 @@ const Drills = (() => {
     summary.textContent = I18N.t("drills.complete", { n: scores.length, pct: avg });
 
     // spaced-repetition bookkeeping (only when a wordlist was used)
-    const wl = current.wlId ? D().wordlists.find((x) => x.id === current.wlId) : null;
+    const wl = wlById(current.wlId);
     if (current.words && wl) {
       const pair = pairFor(current.drillId, wl);
       updateSrs(pair, current.words, scores);
@@ -1000,6 +1189,11 @@ const Drills = (() => {
       current = null;
       el("dr-output").classList.add("hidden");
       el("dr-list").innerHTML = "";
+    }
+    // a built-in list selected under another language no longer resolves
+    if (D().sel.wl && !selectedWl()) {
+      D().sel.wl = null;
+      Store.saveProfile();
     }
     closeDrillForm();
     closeWlForm();
